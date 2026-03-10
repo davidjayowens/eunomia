@@ -16,7 +16,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 #license = "CC-BY-NC-SA"
-#license-files = ["LICEN[CS]E*"]
+license-files = ["LICEN[CS]E*"]
 
 [project.urls]
 Homepage = "https://github.com/davidjayowens/eunomia"
