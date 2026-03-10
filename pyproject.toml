@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "eunomia"
+version = "0.1.0"
+authors = [
+  { name="David Owens", email="davidjayowens+eunomia@gmail.com" },
+]
+description = "A document clustering and visualization project"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "Creative Commons BY-NC-SA"
+license-files = ["LICEN[CS]E*"]
+
+[project.urls]
+Homepage = "https://github.com/davidjayowens/eunomia"
+Issues = "https://github.com/davidjayowens/eunomia/issues"
