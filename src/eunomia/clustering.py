@@ -25,6 +25,14 @@ that appear to be based on the same or similar draft legislation.
 These bills may be (and likely are) sponsored by special interest 
 groups to advance a legislative agenda across multiple states.
 
+
+
+TODO:
+> Move the Mongo IO tasks to the legiscanner scripts
+> Gathering data and right-sizing the DF
+> This should only start with the DF
+
+
 VERSION HISTORY
 ----------------
 [2026.02.*] 
@@ -38,43 +46,35 @@ VERSION HISTORY
     > Created visualize.PolarPlot
 """
 
-import random
-import datetime as dt
-from pathlib import Path
-import re
-from collections import Counter, defaultdict
+#import random
+#import datetime as dt
+#from pathlib import Path
+#import re
+#from collections import Counter, defaultdict
+
 from typing import Literal
 
 import pymongo
-
-import numpy as np
 import pandas as pd
-
-from eunomia.featurize import make_bow, make_gram_tf, make_df, make_vocab, make_tfidf
 
 from sklearn.cluster import DBSCAN, HDBSCAN, OPTICS
 from scipy.cluster import hierarchy
 
+from featurizer import make_bow, make_gram_tf, make_df, make_vocab, make_tfidf
 
 
 
 class DocCluster:
-    # These are specific to the current dataset
-    MIN_YEAR = 2009
-    MAX_YEAR = 2022
-    STATES = ['ak', 'al', 'ar', 'az', 'ca', 'co', 'ct', 'de', 'fl', 'ga', 
-              'hi', 'ia', 'id', 'il', 'in', 'ks', 'ky', 'la', 'ma', 'md', 
-              'me', 'mi', 'mn', 'mo', 'ms', 'mt', 'nc', 'nd', 'ne', 'nh', 
-              'nj', 'nm', 'nv', 'ny', 'oh', 'ok', 'or', 'pa', 'ri', 'sc', 
-              'sd', 'tn', 'tx', 'ut', 'va', 'vt', 'wa', 'wi', 'wv', 'wy']
-    
     def __init__(self,
                  mongo_db: str,
                  mongo_coll: str,
                  force: bool = False,
                  verbose: bool = False):
         """
-        mongo_db
+        Parameters
+        ----------
+        mongo_db : str
+            Name of the 
         mongo_coll
 
         force : bool, default True

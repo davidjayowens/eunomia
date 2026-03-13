@@ -1,5 +1,11 @@
-from typing import Literal  #, Tuple, Iterable
-#from collections import Counter
+"""
+
+
+"""
+
+
+
+from typing import Literal
 import re
 
 import numpy as np
@@ -12,21 +18,17 @@ from nltk.util import ngrams
 
 def make_bow(text: str, 
              filter: bool = True, 
-             swords: list[str] | None = None,
+             stopwords: list[str] | None = None,
              stem: bool = False) -> list[list[str]] | None:
     """
-    Processing steps:
-    - Take in document text as a single string
-    - Filter out numbers and most punctuation
-    - Turn document into list of sentence tokens
-    - Turn sentence tokens into lists of word tokens
-    - Filter out periods and any words shorter than 3 characters
-    - Return 'bag of words' as list of lists of filtered word tokens
+    Turn a text into a Bag of Words representation.
 
+    Parameters
+    ----------
     filter : bool, default True
         If True, applies a series of filters to the text during processing.
 
-    swords : list of str, optional
+    stopwords : list of str, optional
         Can provide a custom list of stopwords to be removed from document texts.
         If no list is provided, uses default stopwords list.
 
@@ -95,9 +97,9 @@ def make_bow(text: str,
 
     # Second filter pass:
     def filter_small(sent: str):
-        # Remove periods, words with fewer than 3 chars,
+        # Remove remaining punctuation, words with fewer than 3 chars,
         pattern4 = re.compile(r'([.!?]+)') # terminal punctuation that was skipped in first filter: . ! ?
-        pattern5 = re.compile(r'\b\w{1,2}\b')  # words with len 1 or 2
+        pattern5 = re.compile(r'\b\w{1,2}\b')  
         
         sent_filtered = sent
         for pattern in [pattern4, pattern5]:
@@ -106,14 +108,12 @@ def make_bow(text: str,
         return(sent_filtered)
     
     # Create sentence-level strings (tokens)
-    # schema: list (bag) of str (sentences)
     if filter:
         sent_tokens = sent_tokenize(filter_nums(text))
     else:
         sent_tokens = sent_tokenize(text)
 
     # Create word-level strings (tokens)
-    # schema: list (bag) of lists (sentences) of str (word tokens)
     if filter:
         word_tokens = [word_tokenize(filter_small(sent)) for sent in sent_tokens]
     else:
