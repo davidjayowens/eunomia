@@ -1,60 +1,6 @@
-"""
-Creates a filtered selection of bills from the mongoDB
-corpus. Samples that include multiple states will be
-proportional by state.
-
-Once the sample is created, the text of each bill is
-featurized:
-    - Bag of Words
-    - n-grams
-    - Term Frequency (tf) vectors
-    - Document Frequency (df) vectors
-    - Term Frequency - Inverse Document Frequency (tf-idf) vectors
-
-The tf-idf vectors are filtered to a limited vocabulary
-and they are clustered by vector similarity.
-
-The first-pass clustering uses truncated features to develop
-topic-level groups. The second-pass clustering uses more specific
-and detailed vocabulary to create clusters within each topic group
-to identify candidate texts which may share common authorship.
-
-The goal is to identify groups of bills with similar topics/themes
-(first-pass) and then within those groups identify sets of texts
-that appear to be based on the same or similar draft legislation.
-These bills may be (and likely are) sponsored by special interest 
-groups to advance a legislative agenda across multiple states.
-
-
-
-TODO:
-> Move the Mongo IO tasks to the legiscanner scripts
-> Gathering data and right-sizing the DF
-> This should only start with the DF
-
-
-VERSION HISTORY
-----------------
-[2026.02.*] 
-    > Updated to use numpy - went from ~30 minutes for 1000 docs to ~5 sec
-    > Change in vocabulary throughout - from "topic & vocab" level processing to "lvl1" etc
-[2026.03.*]
-    > Merged BillCluster and BillPrep into cluster.py
-    > Renamed BillCluster to DocCluster
-    > Renamed BillPrep to DocLoader
-    > Renamed featurizer to featurize
-    > Created visualize.PolarPlot
-"""
-
-#import random
-#import datetime as dt
-#from pathlib import Path
-#import re
-#from collections import Counter, defaultdict
+from __future__ import annotations
 
 from typing import Literal
-
-import pymongo
 import pandas as pd
 
 from sklearn.cluster import DBSCAN, HDBSCAN, OPTICS
@@ -63,76 +9,54 @@ from scipy.cluster import hierarchy
 from featurizer import make_bow, make_gram_tf, make_df, make_vocab, make_tfidf
 
 
-
 class DocCluster:
     def __init__(self,
-                 mongo_db: str,
-                 mongo_coll: str,
-                 force: bool = False,
+                 df: pd.DataFrame,
+                 text_col: str,
                  verbose: bool = False):
         """
         Parameters
         ----------
-        mongo_db : str
-            Name of the 
-        mongo_coll
+        df : pandas DataFrame
+            The data to use for clustering.
 
-        force : bool, default True
-            If True, initial sample will not include previously-generated features;
-            if False, existing features will be copied from Mongo.
+        text_col : str
+            The label of the column containing 
 
         verbose : bool, default True
             If True, print messages while processing.
         """
-
-        # Connect to mongoDB
-        self.MC = pymongo.MongoClient()
-
-        self.mongo_db = mongo_db
-        self.DB = self.MC[mongo_db]
-
-        self.mongo_coll = mongo_coll
-        self.COLL = self.DB[mongo_coll]
+        self._df = df.copy()
+        self._col = text_col
 
         self.verbose = verbose
-
-        # Placeholders for other properties
-        self.df = None       # Sample to be analyzed
-        self._make_dataframe(force=force)
-
-        # TODO: this data can be normalized into its own table
-        #self.cluster_labels = None  # Cluster IDs to their topic labels
-    
 
     # END OF __init__
 
 
-    def _make_dataframe(self, force:bool):
-        """
-        Filter raw data into pandas DataFrame
-        """
-        data = list(self.COLL.find())
+    def __repr__(self):
+        return(f"DocCluster(df=<pd.DataFrame>, text_col={self.col}, verbose={self.verbose})")
 
-        self.df = pd.DataFrame(data=data)
-        
-        # Only retain fields relevant to clustering
-        filter_cols = ['bill_id', 'bill_type_id',
-                       'title', 'description', 'text_body']
-        if not force:
-            filter_cols.append('bow')
-            filter_cols = [col for col in self.df.columns if (col in filter_cols) or (col.startswith('lvl'))]
 
-        # FIXME: Convert any vector features from dict (in Mongo) back to Series
-        # TODO!
+    @property
+    def df(self):
+        return(self._df)
+    @df.setter
+    def df(self, new_df):
+        self._df = new_df.copy()
 
-        self.df = self.df[filter_cols]
+    @property
+    def col(self):
+        return(self._col)
+    @df.setter
+    def col(self, new_col):
+        self._col = new_col
 
 
     def _make_features(self,
                        level: int,
                        use_level: int,
                        use_clusters: list[int] | None = None,
-                       text_type: Literal['title', 'description', 'body'] = 'body',
                        force: bool = False,
                        filter_bow: bool = True,
                        stem_bow: bool = False,
@@ -142,7 +66,7 @@ class DocCluster:
                        tfidf_norm: bool | Literal['max'] = False):
         """
         Create bag of words (bow), stem-/n-grams, and term frequency (tf) 
-        vectors for a set of bills.
+        vectors for a set of bills; these will be used by _make_clusters().
 
         level : int
             Feature level.
@@ -151,8 +75,7 @@ class DocCluster:
                 > ...
 
         use_level : int
-            Feature level of term frequencies to use as basis;
-            ignored if force=True.
+            Feature level of term frequencies to use as basis.
         
         use_clusters : list of int, optional
             If provided, limit featurization to bills in only these clusters
@@ -185,29 +108,18 @@ class DocCluster:
         if self.verbose:
             print(f"Creating new features with parameters:\n"
                   f"General parameters: {level=} // {force=}\n"
-                  f"Bag of Words: {text_type=} // {filter_bow=} // {stem_bow=}\n"
+                  f"Bag of Words: {filter_bow=} // {stem_bow=}\n"
                   f"n-gram Size: {gram_n=}\n"
                   f"Vector Vocab: {min_df=} // {max_df=}\n"
                   f"TF-IDF normalization: {tfidf_norm}\n"
                   f"\nFeature labels: {tf_col}, {tfidf_col}\n")
-
-        text_cols = {
-            'title': 'title',
-            'description': 'description',
-            'body': 'text_body'
-        }
-        text_col = text_cols.get(text_type, 'text_body')
-        if text_col is None:
-            raise ValueError(f"Invalid parameter: {text_type=}\nMust be one of: {list(text_cols.keys())}")
-
-        
 
         if level == 1:
             # Make BoW
             if ('bow' not in self.df.columns) or force:
                 if self.verbose:
                     print("Making Bag of Words...")
-                self.df['bow'] = self.df.apply(lambda x: make_bow(text=x[text_col], filter=filter_bow, stem=stem_bow), axis=1)
+                self.df['bow'] = self.df.apply(lambda x: make_bow(text=x[self.col], filter=filter_bow, stem=stem_bow), axis=1)
                 if self.verbose:
                     print("Bag of Words complete.\n")
 
@@ -255,7 +167,7 @@ class DocCluster:
                 # Make BoW
                 if self.verbose:
                     print("Remaking Bag of Words...")
-                self.df['bow'] = self.df.apply(lambda x: make_bow(text=x[text_col], filter=filter_bow, stem=stem_bow), axis=1)
+                self.df['bow'] = self.df.apply(lambda x: make_bow(text=x[self.col], filter=filter_bow, stem=stem_bow), axis=1)
                 if self.verbose:
                     print("Bag of Words complete.\n")
 
@@ -465,11 +377,9 @@ class DocCluster:
         self.df[cluster_id_col] = self.df[cluster_id_col].astype(int)
 
 
-       
     def make_base_clusters(self,
                            force: bool = True,
                            drop_unclustered: bool = True,
-                           text_type: Literal['title', 'description', 'body'] = 'body',
                            filter_bow: bool = True,
                            stem_bow: bool = True,
                            gram_n: int = 3,
@@ -516,7 +426,6 @@ class DocCluster:
             print("Begin feature processing...")
         self._make_features(level=1,
                             use_level=1,
-                            text_type=text_type,
                             force=force,
                             filter_bow=filter_bow,
                             stem_bow=stem_bow,
@@ -544,7 +453,6 @@ class DocCluster:
                           top_n_by: Literal['size', 'score', 'weighted'] = 'size',
                           force: bool = True,
                           drop_unclustered: bool = False,
-                          text_type: Literal['title', 'description', 'body'] = 'body',
                           filter_bow: bool = True,
                           stem_bow: bool = False,
                           gram_n: int = 5,
@@ -661,8 +569,6 @@ class DocCluster:
             self._make_features(level=level,
                                 use_level=use_level,
                                 use_clusters=prior_clusters,
-                                text_type=text_type,
-                                force=True,
                                 filter_bow=filter_bow,
                                 stem_bow=stem_bow,
                                 gram_n=gram_n,
