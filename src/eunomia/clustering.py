@@ -6,7 +6,7 @@ import pandas as pd
 from sklearn.cluster import DBSCAN, HDBSCAN, OPTICS
 from scipy.cluster import hierarchy
 
-from featurizer import make_bow, make_gram_tf, make_df, make_vocab, make_tfidf
+from eunomia.featurizer import make_bow, make_gram_tf, make_df, make_vocab, make_tfidf
 
 
 class DocCluster:

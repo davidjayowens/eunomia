@@ -11,18 +11,116 @@ import difflib
 import re
 from nltk.tokenize import sent_tokenize
 
+##############################
+##    Visualize Clusters    ##
+##############################
 
 class PlotPolars:
     def __init__(   self,
-                    df: pd.DataFrame):
-        self.df = df.copy()
+                    df: pd.DataFrame,
+                    tfidf_col: str, 
+                    cluster_col: str, 
+                    num_feats: int = 16):
+        """
+        Visualizer for document clusters
+
+        Parameters
+        ----------
+        df : pandas DataFrame
+
+        """
+        self._df = df.copy()
+        self._col_tfidf = tfidf_col
+        self._col_clust = cluster_col
+        self._feats = num_feats
+
+        # DataFrame used in plotting and labeling clusters
+        self._polar_df = self._make_polar_df(tfidf_col=self._col_tfidf,
+                                             cluster_col=self._col_clust,
+                                             num_feats=self._feats)
+        
+
+    def __repr__(self):
+        return(f"PlotPolars(df=<pd.DataFrame>, tfidf_col={self.tfidf_col}, cluster_col={self.cluster_col})")
     
 
-    def make_polar_df(  self, 
+    @property
+    def df(self):
+        return(self._df)
+    @df.setter
+    def df(self, new_df):
+        self._df = new_df.copy()
+
+
+    @property
+    def polar_df(self):
+        return(self._polar_df)
+    
+    def refresh_polar_df(self,
+                         new_tfidf_col: str | None = None,
+                         new_cluster_col: str | None = None,
+                         new_num_feats: int | None = None):
+        """ 
+        Update the object's polar_df with new parameters.
+        """
+        if new_tfidf_col:
+            self.tfidf_col(new_tfidf_col)
+        if new_cluster_col:
+            self.cluster_col(new_cluster_col)
+        if new_num_feats:
+            self.num_feats(new_num_feats)
+
+        self._polar_df = self._make_polar_df(tfidf_col=self._col_tfidf,
+                                             cluster_col=self._col_clust,
+                                             num_feats=self._feats)
+
+
+    @property
+    def tfidf_col(self):
+        return(self._col_tfidf)
+    @tfidf_col.setter
+    def tfidf_col(self, new_col):
+        self._col_tfidf = new_col
+
+
+    @property
+    def cluster_col(self):
+        return(self._df)
+    @cluster_col.setter
+    def cluster_col(self, new_col):
+        self._col_clust = new_col
+
+
+    @property
+    def num_feats(self):
+        return(self._df)
+    @num_feats.setter
+    def num_feats(self, new_num):
+        self._col_clust = new_num
+
+
+    def _make_polar_df( self, 
                         tfidf_col: str, 
                         cluster_col: str, 
-                        num_feats: int = 16, 
-                        inplace: bool = False):
+                        num_feats: int = 16):
+        """
+        Transforms source data into a version ready for plotting and labeling.
+
+        Parameters
+        ----------
+        tfidf_col : str
+            Label of the column containing TF-IDF vectors
+
+        cluster_col : str
+            Label of the column containing cluster IDs
+
+        num_feats : int, default 16
+            The number of features to reduce the TF-IDF vectors to
+            using PCA, prior to visualizing.
+            NOTE: Extremely high values tend to smooth the polar plots
+                    to the point where they just look like circles!
+                
+        """
         # Matrix of tf-idf scores; rows = documents, columns = terms
         tfidf_df =  pd.DataFrame.from_dict(dict(zip(self.df[tfidf_col].index, self.df[tfidf_col].values))).T.fillna(0)
         
@@ -37,19 +135,35 @@ class PlotPolars:
         for str_feat in ['pca_feat', 'cluster_id']:
             polar_df[str_feat] = polar_df[str_feat].astype(str)
         
-        if inplace:
-            self.df = polar_df.copy()
-        else:
-            return(polar_df)
+        
+        self._polar_df = polar_df.copy()
         
     
-    def plot_polars(self, 
-                    cluster_col: str ='cluster_id', 
-                    cluster_ids: bool = None, 
-                    subplots: bool = False, 
-                    max_subplot_cols: int = 3, 
-                    labels_like: str = 'Cluster {id}', 
-                    **kwargs):
+    def plot(   self, 
+                #cluster_col: str = 'cluster_id', 
+                cluster_ids: list[int|str] | None = None, 
+                subplots: bool = False, 
+                max_subplot_cols: int = 3, 
+                labels_like: str = 'Cluster {id}',
+                inplace: bool = True, 
+                **kwargs):
+        """
+
+        Parameters
+        ----------
+        cluster_ids : list of str/int, optional
+            List of cluster_id values to include in the plot.
+
+        subplots : bool, default False
+            If True, creates individual plots for each cluster;
+            if False, all clusters are plotted on a single graph.
+
+        inplace : bool, default True
+            If True, immediately displays the visualization;
+            if False, returns the final plot as an object.
+
+        
+        """
 
         if cluster_ids is None:
             cluster_ids = self.df[cluster_col].unique().tolist()
@@ -153,78 +267,72 @@ class PlotPolars:
         if kwargs.get('paper_bgcolor'):
             fig.update_layout(paper_bgcolor=kwargs.get('paper_bgcolor'))
 
-        fig.show()
-
-
-
-
-
-
-
-class DocDiffs:
-    def __init__(self):
-        pass
-
-
-
-
-
-
-
-
-
-
-
-
-
-def filter_nums(text):
-    # Filter numbers and non-terminal punctuation
-    pattern1 = re.compile(r'(\d+)') # numbers
-    pattern2 = re.compile(r'["#$%&\'()*+,\-/\\:;<=>@[\]^_`{|}~]') # all punctuation except for: . ! ?
-    pattern3 = re.compile(r'\b(?=[mdclxvi])m*(c[md]|d?c{0,3})(x[cl]|l?x{0,3})(i[xv]|v?i{0,3})\b') # roman numerals
-    pattern4 = re.compile(r'\ +')
-
-    text_filtered = text
-    for pattern in [pattern1, pattern2, pattern3, pattern4]:
-        text_filtered = re.sub(pattern, ' ', text_filtered)
-    
-    return(text_filtered)
-
-
-def show_diff(lines1, lines2):
-    #lines1 = string1.splitlines()
-    #lines2 = string2.splitlines()
-
-    differ = difflib.Differ()
-    diff = differ.compare(lines1, lines2)
-
-    for line in diff:
-        if line.startswith("- "):
-            print(f"\033[31m{line}\033[0m")  # Red for removals
-        elif line.startswith("+ "):
-            print(f"\033[32m{line}\033[0m")  # Green for additions
-        elif line.startswith("? "):
-            print(f"\033[33m{line}\033[0m")  # Yellow for hints
+        if inplace:
+            fig.show()
         else:
-            print(line)
+            return(fig)
 
 
-def show_unified_diff(lines1, lines2):
-    #lines1 = string1.splitlines()
-    #lines2 = string2.splitlines()
+###############################################
+##    Highlight Document Text Differences    ##
+###############################################
 
-    diff = difflib.unified_diff(lines1, lines2, lineterm="")
-    for line in diff:
-        if line.startswith("-"):
-            print(f"\033[31m{line}\033[0m")  # Red for removals
-        elif line.startswith("+"):
-            print(f"\033[32m{line}\033[0m")  # Green for additions
-        else:
-            print(line)
+class DocDiff:
+    def __init__(self,
+                 df: pd.DataFrame,
+                 ):
+        self._df = df.copy()
 
 
-def doc_diff(df, idx1, idx2, text_col):
-    text1 = sent_tokenize(filter_nums(df.loc[idx1, text_col]))
-    text2 = sent_tokenize(filter_nums(df.loc[idx2, text_col]))
 
-    return(show_diff(text1, text2))
+    def filter_nums(text):
+        # Filter numbers and non-terminal punctuation
+        pattern1 = re.compile(r'(\d+)') # numbers
+        pattern2 = re.compile(r'["#$%&\'()*+,\-/\\:;<=>@[\]^_`{|}~]') # all punctuation except for: . ! ?
+        pattern3 = re.compile(r'\b(?=[mdclxvi])m*(c[md]|d?c{0,3})(x[cl]|l?x{0,3})(i[xv]|v?i{0,3})\b') # roman numerals
+        pattern4 = re.compile(r'\ +')
+
+        text_filtered = text
+        for pattern in [pattern1, pattern2, pattern3, pattern4]:
+            text_filtered = re.sub(pattern, ' ', text_filtered)
+        
+        return(text_filtered)
+
+
+    def show_diff(lines1, lines2):
+        #lines1 = string1.splitlines()
+        #lines2 = string2.splitlines()
+
+        differ = difflib.Differ()
+        diff = differ.compare(lines1, lines2)
+
+        for line in diff:
+            if line.startswith("- "):
+                print(f"\033[31m{line}\033[0m")  # Red for removals
+            elif line.startswith("+ "):
+                print(f"\033[32m{line}\033[0m")  # Green for additions
+            elif line.startswith("? "):
+                print(f"\033[33m{line}\033[0m")  # Yellow for hints
+            else:
+                print(line)
+
+
+    def show_unified_diff(lines1, lines2):
+        #lines1 = string1.splitlines()
+        #lines2 = string2.splitlines()
+
+        diff = difflib.unified_diff(lines1, lines2, lineterm="")
+        for line in diff:
+            if line.startswith("-"):
+                print(f"\033[31m{line}\033[0m")  # Red for removals
+            elif line.startswith("+"):
+                print(f"\033[32m{line}\033[0m")  # Green for additions
+            else:
+                print(line)
+
+
+    def doc_diff(df, idx1, idx2, text_col):
+        text1 = sent_tokenize(filter_nums(df.loc[idx1, text_col]))
+        text2 = sent_tokenize(filter_nums(df.loc[idx2, text_col]))
+
+        return(show_diff(text1, text2))
