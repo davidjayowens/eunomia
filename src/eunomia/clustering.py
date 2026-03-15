@@ -9,10 +9,19 @@ from scipy.cluster import hierarchy
 from eunomia.featurizer import make_bow, make_gram_tf, make_df, make_vocab, make_tfidf
 
 
+CLUSTER_METHODS = {
+            'dbscan': DBSCAN,
+            'hdbscan': HDBSCAN,
+            'optics': OPTICS,
+            'hierarchy': hierarchy
+            }
+
+
 class DocCluster:
     def __init__(self,
                  df: pd.DataFrame,
                  text_col: str,
+                 cluster_method: Literal['dbscan', 'hdbscan', 'optics', 'hierarchy'] | object = 'dbscan',
                  verbose: bool = False):
         """
         Parameters
@@ -23,11 +32,21 @@ class DocCluster:
         text_col : str
             The label of the column containing 
 
+        cluster_method: one of {'dbscan', 'hdbscan', 'optics', 'hierarchy'}
+                        OR a clustering package
+            Either select one of 4 pre-configured clustering methods or provide
+            the clustering method directly.
+
         verbose : bool, default True
             If True, print messages while processing.
         """
-        self._df = df.copy()
-        self._col = text_col
+        self.df = df
+        self.text_col = text_col
+
+        self._method = None
+        self._clusterer = None
+        self._preconfig = True  # Using one of the preconfigured clustering packages
+        self.cluster_method = cluster_method    # Calls @cluster_method.setter
 
         self.verbose = verbose
 
@@ -35,7 +54,7 @@ class DocCluster:
 
 
     def __repr__(self):
-        return(f"DocCluster(df=<pd.DataFrame>, text_col={self.col}, verbose={self.verbose})")
+        return(f"DocCluster(df=<pd.DataFrame>, text_col={self.col}, cluster_method={self.cluster_method}, verbose={self.verbose})")
 
 
     @property
@@ -44,13 +63,35 @@ class DocCluster:
     @df.setter
     def df(self, new_df):
         self._df = new_df.copy()
+    # Public setter for .df
+    def update_df(self, new_df):
+        """ Replace the DataFrame data. """
+        self.df = new_df
+
+
+    # Public setter for .text_col
+    def update_text_col(self, new_col):
+        """ Replace the label of the text column. """
+        self.text_col = new_col
+        
 
     @property
-    def col(self):
-        return(self._col)
-    @df.setter
-    def col(self, new_col):
-        self._col = new_col
+    def cluster_method(self):
+        return(self._method)
+    @cluster_method.setter
+    def cluster_method(self, new_method):
+        if isinstance(new_method, str):
+            self._method = new_method if new_method in ['dbscan', 'hdbscan', 'optics', 'hierarchy'] else 'dbscan'
+            self._clusterer = CLUSTER_METHODS[self._method]
+            self._preconfig = True
+        else:
+            self._method = repr(new_method)
+            self._clusterer = new_method
+            self._preconfig = False
+    # Public setter for .cluster_method
+    def update_cluster_method(self, new_method):
+        """ """
+        self.cluster_method = new_method
 
 
     def _make_features(self,
@@ -222,31 +263,28 @@ class DocCluster:
                        use_level: int,
                        use_clusters: list[int] | None = None,
                        drop_unclustered: bool = False,
-                       cluster_method: Literal['dbscan', 'hdbscan', 'optics', 'hierarchy'] = 'dbscan',
                        **cluster_params):
         """
         Calculate bills' TF-IDF vectors and cluster them by similarity.
 
         level : int
-            Feature level.
-                > 1 = First-order clustering
-                > 2 = Second-order clustering
-                > ...
+            Cluster set.
+            > 1 = First-order clusters
+            > 2+ = Second-order clusters
+
+        use_level : int
+            Featurization level to use in clustering.
         
         drop_unclustered : bool, default False
             If True, after clustering, drop rows that were unclustered (cluster ID = -1)
         
+        **cluster_params : optional
+            Parameters to pass to the clustering method; includes:
+            > min_samples : int, default 2 or 3 ()
+            > metric : str, default 'cosine'
+            > n_jobs : int, default -1
+
         """
-        clustering_methods = {
-            'dbscan': DBSCAN,
-            'hdbscan': HDBSCAN,
-            'optics': OPTICS,
-            'hierarchy': hierarchy
-        }
-        this_method = cluster_method.strip().lower()
-        clusterer = clustering_methods.get(this_method)
-        if clusterer is None:
-            raise ValueError(f"Invalid parameter: {cluster_method=}\nMust be one of: {list(clustering_methods.keys())}")
 
         """
         DBSCAN(eps=0.5, *, min_samples=5, metric='euclidean', metric_params=None, algorithm='auto', leaf_size=30, p=None, n_jobs=None)
@@ -596,6 +634,8 @@ class DocCluster:
     def get_cluster_centroids(self):
         """
         Get the average tf-idf vector defining each cluster.
+        
+        TODO
         """
         pass
 
@@ -618,18 +658,7 @@ class DocCluster:
     def get_cluster_bills(self):
         """
         Get the bills in each cluster
+        
+        TODO
         """
         pass
-
-
-    def update_mongo(self):
-        """
-        Update the sample collection in MongoDB with the 
-        features currently in memory.
-        """
-        # FIXME: Need to convert Series vectors to dict
-        # FIXME: Need to convert dict back to Series on init
-        for record in self.df.to_dict('records'):
-            self.COLL.update_one({'_id':{'$eq':record['bill_id']}}, {'$set': record})
-
-    

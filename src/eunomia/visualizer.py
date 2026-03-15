@@ -70,9 +70,9 @@ class PlotPolars:
         if new_num_feats:
             self.num_feats(new_num_feats)
 
-        self._polar_df = self._make_polar_df(tfidf_col=self._col_tfidf,
-                                             cluster_col=self._col_clust,
-                                             num_feats=self._feats)
+        self._make_polar_df(tfidf_col=self._col_tfidf,
+                            cluster_col=self._col_clust,
+                            num_feats=self._feats)
 
 
     @property
@@ -117,8 +117,7 @@ class PlotPolars:
         num_feats : int, default 16
             The number of features to reduce the TF-IDF vectors to
             using PCA, prior to visualizing.
-            NOTE: Extremely high values tend to smooth the polar plots
-                    to the point where they just look like circles!
+            NOTE: 10-20 is the recommended range, but feel free to experiment!
                 
         """
         # Matrix of tf-idf scores; rows = documents, columns = terms
@@ -140,7 +139,6 @@ class PlotPolars:
         
     
     def plot(   self, 
-                #cluster_col: str = 'cluster_id', 
                 cluster_ids: list[int|str] | None = None, 
                 subplots: bool = False, 
                 max_subplot_cols: int = 3, 
@@ -158,19 +156,51 @@ class PlotPolars:
             If True, creates individual plots for each cluster;
             if False, all clusters are plotted on a single graph.
 
+        max_subplot_cols: int, default 3
+            If subplots=True, this value sets the maximum number of subplot
+            columns.
+
+        labels_like : str, default 'Cluster {id}'
+            Sets how each cluster is identified on the legend. Use '{id}' 
+            to include the cluster_id value.
+
         inplace : bool, default True
             If True, immediately displays the visualization;
             if False, returns the final plot as an object.
 
-        
+        **kwargs : optional plotly keyword parameters
+            > colorscale : str, plotly colorscale, default 'turbo_r'
+            > colorscale_low : float, low end of the color spectrum, default 0.0
+            > colorscale_high : float, high end of the color spectrum, default 1.0
+            > horizontal_spacing : float, horizontal distance between subplots, default 0.0
+            > vertical_spacing : float, vertical distance between subplots, default 0.1
+            > paper_bgcolor : plotly color value, fill color outside the polar plot, default black 
+            > plot_bgcolor : plotly color value, fill color inside the polar plot, default black
+            > grid_color : plotly color value, line color of the boundary/axes of the polar plot, default grey
+            > rounded_plot : bool, False makes plat polygonal, default True
+            > fill_traces : bool, True fills the interior of each plot, default False
+            > title : str, sets plot title, default "Plot of TF-IDF vectors"
+            > showlegend : bool, controls the legend display, default True
+            > template : str, plotly color template, default 'plotly_dark'
+            > autosize : bool, automatically configure plot size, default True
+            > width : int, sets plot width, default is autosize=True
+            > height : int, sets plot height, default is autosize=True
+                >> NOTE: autosize and width/height are mutually exclusive!
+            > margin : dict, sets plot margins, optional
+                >> EG: margin={'l':10,'r':10,'t':10,'b':10}
+            > minreducedwidth : int, sets minimum (sub)plot width, optional
+            > minreducedheight : int, sets minimum (sub)plot height, optional
+    
         """
 
         if cluster_ids is None:
-            cluster_ids = self.df[cluster_col].unique().tolist()
+            cluster_ids = self.polar_df.cluster_id.unique().tolist()
+        elif not isinstance(cluster_ids, list):
+            cluster_ids = [cluster_ids]
 
         # Cluster IDs can be provided as int or str, but are stored as str values
-        cluster_idnums = [int(id) for id in cluster_ids]
-        sorted_cluster_ids = [str(id) for id in sorted(cluster_idnums)]
+        cluster_idnums = [int(id) for id in cluster_ids]    # Validate that values are numeric
+        sorted_cluster_ids = [str(id) for id in sorted(cluster_idnums)] # Store as strings
         num_clusters = len(sorted_cluster_ids)
 
         # Create color map
@@ -209,7 +239,7 @@ class PlotPolars:
         row = 1
         col = 1
         for cluster in sorted_cluster_ids:
-            cluster_df = self.df.loc[self.df[cluster_col]==cluster]
+            cluster_df = self.df.loc[self.df.cluster_id==cluster]
             fig.add_trace(  go.Scatterpolar(r=cluster_df['pca_score'], 
                                             theta=cluster_df['pca_feat'],
                                             mode='lines', 
@@ -249,7 +279,7 @@ class PlotPolars:
                             showlegend = kwargs.get('showlegend',True),
                             template = kwargs.get('template','plotly_dark'),
                         )
-        if kwargs.get('autosize') is True:
+        if kwargs.get('autosize') and not kwargs.get('width') and not kwargs.get('height'):
             fig.update_layout(autosize=True)
         else:
             fig.update_layout(autosize=False)
