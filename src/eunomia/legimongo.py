@@ -15,108 +15,126 @@ import tika
 from tika import parser
 from striprtf.striprtf import rtf_to_text
 
-from legiscanner.config import MIN_YEAR, MAX_YEAR, STATES
+from eunomia.config import MIN_YEAR, MAX_YEAR, STATES
 
 
 class Legiscan2Mongo:
     def __init__(self,
                  mongo_db: str,
                  mongo_coll: str,
-                 file_dir: str | Path | None = None,
                  verbose: bool = False) -> object:
         """
         Parameters
         ----------
         mongo_db : str
-            Name of the Mongo database where the collection is saved.
+            Name of the Mongo database where the collection is 
+            (or will be) saved.
 
         mongo_coll : str
-            Name of the Mongo collection where the data is saved.
-
-        file_dir : str or Path, optional
-            Directory where Legiscan zipfiles are stored. 
-            Only used by .load_zips().
-
+            Name of the Mongo collection where the data is 
+            (or will be) saved.
+            
         verbose : bool, default False
             If True, prints updates to stdout during processing.
         """
+        self.verbose = verbose
         
         # Connect to MongoDB and set target DB & collection
-        self.MC = pymongo.MongoClient()
-
         self.mongo_db = mongo_db
-        self.DB = self.MC[mongo_db]
-
         self.mongo_coll = mongo_coll
-        self.COLL = self.DB[mongo_coll]
+        self.MONGO = MongoDF(db=mongo_db, coll=mongo_coll, verbose=verbose)
 
-        # Store list of any samples created
-        self.samples = []
+        # Initialize placeholders
+        self.DF = None              # Used by load_df()
+        self.DATA_FOLDER = None     # Used by load_zips()
 
-        # Use current directory unless otherwise specified
-        if file_dir is not None:
-            self.DATA_FOLDER = Path(file_dir).resolve()
-        else:
-            self.DATA_FOLDER = None
+    # END OF __init__
 
-        self.verbose = verbose
 
-    
-    def _upsert(self, data):
-        """ Add a single record to Mongo """
-        self.COLL.update_one(data, {'$setOnInsert': data}, upsert=True)
+    #####################################
+    ##    Legiscan2Mongo Properties    ##
+    #####################################
 
-    def add_to_mongo(self,
-                     data: dict | pd.DataFrame):
+    def __repr__(self):
+        return(f"Legiscan2Mongo(mongo_db={self.mongo_db}, mongo_coll={self.mongo_coll}, verbose={self.verbose})")
+
+
+    ##################################
+    ##    Legiscan2Mongo Methods    ##
+    ##################################
+
+    def load_df(self,
+                df: pd.DataFrame,
+                subset: str | list[str] | None = None,
+                verbose: bool | None = None):
         """
-        Inserts/updates data in the MongoDB collection.
+        Load data from a pandas DataFrame into MongoDB.
 
-        A dict can only be used to add a single record at a time,
-        but a DataFrame can add multiple.
-        """
-        if isinstance(data, dict):
-            self._upsert(data)
-                        
-        elif isinstance(data, pd.DataFrame):
-            for record in data.to_dict(orient='records'):
-                self._upsert(record)
+        Parameters
+        ----------
+        df : pandas DataFrame
+            Data to be loaded into the MongoDB collection.
+
+        subset : str or list of them, optional
+            One or more columns to use as a subset of the provided DataFrame
+            when loading into MongoDB.
         
+        verbose : bool, optional
+            If True, prints updates to stdout during processing. If not
+            provided, uses the value configured on init.
+
+        """
+        if verbose is None:
+            verbose = self.verbose
+
+        if isinstance(subset, str):
+            subset = [subset]
+
+        if isinstance(subset, list):
+            if verbose:
+                print(f"Updating MongoDB using columns: {subset}")
+            self.DF = df[subset]
         else:
-            raise ValueError("Invalid data provided - must be a dict or a pandas DataFrame.")
+            if verbose:
+                print(f"Updating MongoDB using all available columns")
+            self.DF = df
+
+        self.MONGO._update_mongo(self.DF)
+
+        if verbose:
+            print(f"MongoDB updates complete.")
 
 
     def load_zips(self, 
+                  file_dir: str | Path,
                   bill_types: int | str | list[int|str] | None = None,
-                  file_dir: str | Path | None = None,
                   verbose: bool | None = None):
         """
         Load all LegiScan zip files in target directory into MongoDB.
 
         Parameters
         ----------
+        file_dir : str or Path
+            Directory where LegiScan zip files are stored.
+        
         bill_types : int or list of ints, optional
-            One or more Legiscan bill_type_id values
+            One or more LegiScan bill_type_id values
             NOTE: See legiscanner.BILL_TYPES for a dictionary of bill_type_id
                     values and their meanings.
-
-        file_dir : str or Path, optional
-            Directory where legiscan files are stored.
 
         verbose : bool, defaults to the value provided to init()
             If True, prints updates during processing.
         """
-        if isinstance(bill_types, int) and (bill_types in range(1,24)):
-            bill_type_filter = [str(bill_types)]
-        elif isinstance(bill_types, list):
+        if isinstance(bill_types, int):
+            bill_types = [bill_types]
+        
+        if isinstance(bill_types, list):
             bill_type_filter = [str(int(v)) for v in bill_types if int(v) in range(1,24)]
         else:
             bill_type_filter = None
 
-        if (file_dir is None) and (self.DATA_FOLDER is None):
-            raise ValueError("No directory provided.\nPlease provide a valid path to the file_dir parameter.")
-        elif (file_dir is not None):
-            self.DATA_FOLDER = Path(file_dir).resolve()
-        # else self.DATA_FOLDER was configured on init, use that value
+        # Resolve input folder
+        self.DATA_FOLDER = Path(file_dir).resolve()
 
         if verbose is None:
             verbose = self.verbose
@@ -202,7 +220,7 @@ class Legiscan2Mongo:
 
                         # Write bill record to MongoDB
                         status = "Writing record to Mongo"
-                        self._upsert(temp_bill_data)
+                        self.MONGO._update_mongo(temp_bill_data)
                         
                         # Update counter
                         done_cnt += 1
@@ -218,6 +236,9 @@ class Legiscan2Mongo:
                         if verbose:
                             print(f"Result: FAILURE // Stopped at: {status} // Error: {e}\n")
         print()
+
+        # Refresh .df based on updated collection
+        self._df_from_coll()
 
         results =   f"""
                     RESULTS:
@@ -235,29 +256,6 @@ class Legiscan2Mongo:
         results = re.sub(pattern=repl_patt, repl='', string=results).strip()
 
         return(results) 
-
-
-    def save_loading_fails(self,
-                           file_name: str):
-        """
-        Save the list of bills which failed to process as a .CSV file.
-
-        NOTE: Does not include bills skipped due to bill_type_id filtering.
-
-        Parameters
-        ----------
-        file_name : str or Path
-            Name of the saved file.
-        """
-        if file_name.lower().endswith('.csv'):
-            this_file_name = Path(file_name).resolve()
-        else:
-            this_file_name = Path(f'{file_name}.csv').resolve()
-
-        # ((zip, bill, status, e))
-        lf_df = pd.DataFrame(data=self.loading_fails, columns=['zip_file', 'bill_file', 'last_status', 'error'])
-
-        lf_df.to_csv(this_file_name, index=False)
 
 
     def decode_texts(self, 
@@ -288,6 +286,7 @@ class Legiscan2Mongo:
         self.decoding_fails = []
 
         # Gather all bills in the current collection
+        # FIXME: Use local .df instead of re-collecting from MongoDB
         if undecoded_only and (state is not None):
             records = list(self.COLL.find({'state':state.upper(), 'text_body':None}))
         elif undecoded_only:
@@ -351,32 +350,6 @@ class Legiscan2Mongo:
         results = re.sub(pattern=repl_patt, repl='', string=results).strip()
 
         return(results) 
-
-
-    def save_decoding_fails(self,
-                            file_name: str):
-        """
-        Save the bills which failed to process as a .CSV file.
-
-        NOTE: Does not include bills skipped due to bill_type_id filtering.
-
-        Parameters
-        ----------
-        file_name : str or Path
-            Name of the saved file.
-
-        file_dir : str or Path, optional
-            Location of the saved file.
-        """
-        if file_name.lower().endswith('.csv'):
-            this_file_name = Path(file_name).resolve()
-        else:
-            this_file_name = Path(f'{file_name}.csv').resolve()
-
-        # ((zip, bill, status, e))
-        df_df = pd.DataFrame(data=self.decoding_fails, columns=['bill_id', 'mime_id', 'error'])
-
-        df_df.to_csv(this_file_name, index=False)
 
    
     @staticmethod
@@ -454,13 +427,16 @@ class Legiscan2Mongo:
 # END OF Legiscan2Mongo class
 
 
+
+
 class MongoDF:
     def __init__(self,
                  db: str,
                  coll: str,
+                 df: pd.DataFrame | None = None,
                  verbose: bool = False) -> object:
         """
-        Creates an object for convenient interaction with MongoDB.
+        Creates an object to manage and modify MongoDB data.
 
         Parameters
         ----------
@@ -470,22 +446,34 @@ class MongoDF:
         coll : str
             Name of the Mongo collection where the data is saved.
 
+        df : pandas DataFrame, optional
+            Provide data to add to the MongoDB collection. If the collection
+            already contains data, records provided to df parameter will be
+            inserted/updated in the collection.
+
         verbose : bool, default False
             If True, prints updates to stdout during processing.
         """
+        self.verbose = verbose
+        
         # Connect to MongoDB collection and create a local DataFrame from it
         # NOTE: These should not be accessed by the user directly and their
         #       setter methods are encapsulated by the .db and .coll properties.
         self._MC = pymongo.MongoClient()
-        self._DB = None
-        self._COLL = None
-
-        # See the .db, .coll, and .df properties for details on these assignments
-        self.update_df(db, coll)
-        # -> creates self.db, self.coll, self.df
-
-        self.verbose = verbose
-    
+        #self._DB and self._COLL are set implicitly
+        
+        # Create self.db, self.coll, self.df
+        # (See the .db, .coll, and .df properties for details on these attributes)
+        self.use_coll(db, coll)
+        
+        self.df_in = isinstance(df, pd.DataFrame)
+        # If new data provided
+        if self.df_in:
+            # Insert/update new data
+            self._update_mongo(df)
+            # Refresh .df based on updated collection
+            self._df_from_coll()
+            
     # END OF __init__
 
 
@@ -494,10 +482,10 @@ class MongoDF:
     ##############################
 
     def __repr__(self):
-        return(f"MongoDF(mongo_db={self.mongo_db}, mongo_coll={self.mongo_coll}, verbose={self.verbose})")
+        return(f"MongoDF(mongo_db={self.mongo_db}, mongo_coll={self.mongo_coll}, df={'<pd.DataFrame>' if self.df_in else 'None'}, verbose={self.verbose})")
         
 
-    @property
+    @property           # self.db getter & setter
     def db(self):
         return(self._db)
     @db.setter
@@ -506,27 +494,41 @@ class MongoDF:
         self._DB = self._MC[self._db]
 
 
-    @property
+    @property           # self.coll getter & setter
     def coll(self):
         return(self._coll)
     @coll.setter
     def coll(self, new_coll):
         self._coll = new_coll
         self._COLL = self._DB[self._coll]
+    # Alias
+    collection = coll
 
 
-    @property
+    @property           # self.df getter & setter
     def df(self):
         return(self._df)
     @df.setter 
     def df(self, new_df):
+        if not isinstance(new_df, pd.DataFrame):
+            raise ValueError("Invalid value - must be a pandas DataFrame.")
         self._df = new_df.copy()
-    # Public setter for .df
-    def update_df(  self,
+    
+
+    # Updaters
+
+    def _df_from_coll(self):
+        """ Gather MongoDB collection into pandas DF """
+        data = list(self._COLL.find())
+        self.df = pd.DataFrame(data)
+
+
+    def use_coll(   self,
                     new_db: str | None = None,
                     new_coll: str | None = None):
         """
-        Update .df with a new MongoDB collection.
+        Use the specified MongoDB collection. Updates local DataFrame (object.df)
+        with collection data.
 
         Parameters
         ----------
@@ -541,15 +543,36 @@ class MongoDF:
             self.db = new_db
         if new_coll:
             self.coll = new_coll
-
-        data = list(self._COLL.find())
-
-        self.df = pd.DataFrame(data)
-
+        
+        self._df_from_coll()
+    
 
     ###########################
     ##    MongoDF Methods    ##
     ###########################
+
+    def _update_mongo(  self,
+                        data: dict | pd.DataFrame):
+        """
+        Inserts/updates data in the MongoDB collection.
+
+        A dict can only be used to add a single record at a time,
+        but a DataFrame can add one or multiple.
+        """
+        def _upsert(record: dict):
+            """ Add/update a single record in MongoDB """
+            self.coll.update_one(record, {'$setOnInsert': record}, upsert=True)
+
+        if isinstance(data, dict):
+            _upsert(data)
+                        
+        elif isinstance(data, pd.DataFrame):
+            for d in data.to_dict(orient='records'):
+                _upsert(d)
+        
+        else:
+            raise ValueError("Invalid data provided - must be a dict or a pandas DataFrame.")
+
 
     def make_subsample( self,
                         new_coll_name: str,
@@ -691,10 +714,6 @@ class MongoDF:
             pline_dict_03
         ]
         sample = list(self._COLL.aggregate(pline))
-        
-        # Create new collection to store sample in Mongo
-        if new_coll_name not in self.samples:
-            self.samples.append(new_coll_name)
 
         samp_coll = self.DB[new_coll_name]
         doc_count = samp_coll.count_documents({})
@@ -712,12 +731,12 @@ class MongoDF:
 
         # Update object data
         if update_self:
-            self.refresh_df(new_coll=new_coll_name)
+            self.switch_coll(new_coll=new_coll_name)
 
 
-    def make_cluster_df(self,
-                        text_col: str = 'text_body',
-                        id_col: str | None = 'bill_id',) -> pd.DataFrame:
+    def cluster_df( self,
+                    text_col: str = 'text_body',
+                    id_col: str | None = 'bill_id',) -> pd.DataFrame:
         """ 
         Return the current collection with only two features: 
         > text_col: A field containing the document texts to be analyzed and clustered
@@ -730,6 +749,6 @@ class MongoDF:
             return(self.df[[id_col, text_col]])
         else:
             return(self.df[[text_col]])
-    
+
 
 

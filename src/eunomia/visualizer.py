@@ -11,6 +11,7 @@ import difflib
 import re
 from nltk.tokenize import sent_tokenize
 
+
 ##############################
 ##    Visualize Clusters    ##
 ##############################
@@ -27,21 +28,30 @@ class PlotPolars:
         Parameters
         ----------
         df : pandas DataFrame
+            Clustered data, as produced by eunomia.clustering.DocCluster.
+
+        tfidf_col: str
+            Label of the tf-idf column used in clustering.
+
+        cluster_col: str
+            Label of the column containing cluster IDs.
+
+        num_feats: int, default 16
+            Reduce the number of tf=idf features to num_feats (via PCA)
+            for visualization.
 
         """
-        self._df = df.copy()
-        self._col_tfidf = tfidf_col
-        self._col_clust = cluster_col
-        self._feats = num_feats
+        self.df = df
 
         # DataFrame used in plotting and labeling clusters
-        self._polar_df = self._make_polar_df(tfidf_col=self._col_tfidf,
-                                             cluster_col=self._col_clust,
-                                             num_feats=self._feats)
+        self.update_polar_df(   tfidf_col=tfidf_col,
+                                cluster_col=cluster_col,
+                                num_feats=num_feats)
+        # Also sets self.tfidf_col, self.cluster_col, and self.num_feats
         
 
     def __repr__(self):
-        return(f"PlotPolars(df=<pd.DataFrame>, tfidf_col={self.tfidf_col}, cluster_col={self.cluster_col})")
+        return(f"PlotPolars(df=<pd.DataFrame>, tfidf_col={self.tfidf_col}, cluster_col={self.cluster_col}, num_feats={self.num_feats})")
     
 
     @property
@@ -49,93 +59,58 @@ class PlotPolars:
         return(self._df)
     @df.setter
     def df(self, new_df):
+        if not isinstance(new_df, pd.DataFrame):
+            raise ValueError("Invalid value for .df - must be pandas DataFrame.")
         self._df = new_df.copy()
 
 
     @property
     def polar_df(self):
         return(self._polar_df)
+    @polar_df.setter
+    def polar_df(self, new_df):
+        if not isinstance(new_df, pd.DataFrame):
+            raise ValueError("Invalid value for .polar_df - must be pandas DataFrame.")
+        self._polar_df = new_df.copy()
     
-    def refresh_polar_df(self,
-                         new_tfidf_col: str | None = None,
-                         new_cluster_col: str | None = None,
-                         new_num_feats: int | None = None):
-        """ 
-        Update the object's polar_df with new parameters.
-        """
-        if new_tfidf_col:
-            self.tfidf_col(new_tfidf_col)
-        if new_cluster_col:
-            self.cluster_col(new_cluster_col)
-        if new_num_feats:
-            self.num_feats(new_num_feats)
 
-        self._make_polar_df(tfidf_col=self._col_tfidf,
-                            cluster_col=self._col_clust,
-                            num_feats=self._feats)
-
-
-    @property
-    def tfidf_col(self):
-        return(self._col_tfidf)
-    @tfidf_col.setter
-    def tfidf_col(self, new_col):
-        self._col_tfidf = new_col
-
-
-    @property
-    def cluster_col(self):
-        return(self._df)
-    @cluster_col.setter
-    def cluster_col(self, new_col):
-        self._col_clust = new_col
-
-
-    @property
-    def num_feats(self):
-        return(self._df)
-    @num_feats.setter
-    def num_feats(self, new_num):
-        self._col_clust = new_num
-
-
-    def _make_polar_df( self, 
-                        tfidf_col: str, 
-                        cluster_col: str, 
-                        num_feats: int = 16):
+    def _make_polar_df(self):
         """
         Transforms source data into a version ready for plotting and labeling.
-
-        Parameters
-        ----------
-        tfidf_col : str
-            Label of the column containing TF-IDF vectors
-
-        cluster_col : str
-            Label of the column containing cluster IDs
-
-        num_feats : int, default 16
-            The number of features to reduce the TF-IDF vectors to
-            using PCA, prior to visualizing.
-            NOTE: 10-20 is the recommended range, but feel free to experiment!
-                
         """
         # Matrix of tf-idf scores; rows = documents, columns = terms
-        tfidf_df =  pd.DataFrame.from_dict(dict(zip(self.df[tfidf_col].index, self.df[tfidf_col].values))).T.fillna(0)
+        tfidf_df =  pd.DataFrame.from_dict(dict(zip(self.df[self.tfidf_col].index, self.df[self.tfidf_col].values))).T.fillna(0)
         
         # Reduce (by PCA) to the num_feats to use in visualization
-        pca_df = pd.DataFrame(PCA(n_components=num_feats).fit_transform(tfidf_df), index=self.df[tfidf_col].index)
+        pca_df = pd.DataFrame(PCA(n_components=self.num_feats).fit_transform(tfidf_df), index=self.df[self.tfidf_col].index)
+        # Normalize from [-1,1] to [0,1] scale
         pca_df = (pca_df + 1)/2
 
         # Assemble the version of the DF for plotting with polar coordinates
         polar_df = pd.DataFrame(pca_df.stack(level=0)).reset_index(level=1, names=['','pca_feat'])
-        polar_df = polar_df.merge(self.df[cluster_col], how='left', left_index=True, right_index=True)
-        polar_df.rename(columns={0:'pca_score', cluster_col:'cluster_id'}, inplace=True)
+        polar_df = polar_df.merge(self.df[self.cluster_col], how='left', left_index=True, right_index=True)
+        polar_df.rename(columns={0:'pca_score', self.cluster_col:'cluster_id'}, inplace=True)
         for str_feat in ['pca_feat', 'cluster_id']:
             polar_df[str_feat] = polar_df[str_feat].astype(str)
-        
-        
-        self._polar_df = polar_df.copy()
+
+        self.polar_df = polar_df
+
+
+    def update_polar_df(self,
+                        tfidf_col: str | None = None,
+                        cluster_col: str | None = None,
+                        num_feats: int | None = None):
+        """ 
+        Update the object's polar_df with new parameters.
+        """
+        if tfidf_col:
+            self.tfidf_col = tfidf_col
+        if cluster_col:
+            self.cluster_col = cluster_col
+        if num_feats:
+            self.num_feats = num_feats
+
+        self._make_polar_df()
         
     
     def plot(   self, 
@@ -301,6 +276,10 @@ class PlotPolars:
             fig.show()
         else:
             return(fig)
+
+# END OF PlotPolars class
+
+
 
 
 ###############################################

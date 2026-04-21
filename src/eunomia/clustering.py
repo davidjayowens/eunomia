@@ -30,23 +30,21 @@ class DocCluster:
             The data to use for clustering.
 
         text_col : str
-            The label of the column containing 
+            The label of the column containing the document texts to be clustered.
 
         cluster_method: one of {'dbscan', 'hdbscan', 'optics', 'hierarchy'}
-                        OR a clustering package
+                        OR a clustering object
             Either select one of 4 pre-configured clustering methods or provide
             the clustering method directly.
 
         verbose : bool, default True
             If True, print messages while processing.
         """
-        self.df = df
+        self.df = df                # Stored as self._df
         self.text_col = text_col
 
-        self._method = None
-        self._clusterer = None
-        self._preconfig = True  # Using one of the preconfigured clustering packages
-        self.cluster_method = cluster_method    # Calls @cluster_method.setter
+        self.cluster_method = cluster_method
+        # Implicitly creates: self._method, self._clusterer, and self._preconfig
 
         self.verbose = verbose
 
@@ -54,7 +52,7 @@ class DocCluster:
 
 
     def __repr__(self):
-        return(f"DocCluster(df=<pd.DataFrame>, text_col={self.col}, cluster_method={self.cluster_method}, verbose={self.verbose})")
+        return(f"DocCluster(df=<pd.DataFrame>, text_col={self.text_col}, cluster_method={self.cluster_method}, verbose={self.verbose})")
 
 
     @property
@@ -62,18 +60,10 @@ class DocCluster:
         return(self._df)
     @df.setter
     def df(self, new_df):
+        if not isinstance(new_df, pd.DataFrame):
+            raise ValueError("Invalid value - must be pandas DataFrame.")
         self._df = new_df.copy()
-    # Public setter for .df
-    def update_df(self, new_df):
-        """ Replace the DataFrame data. """
-        self.df = new_df
-
-
-    # Public setter for .text_col
-    def update_text_col(self, new_col):
-        """ Replace the label of the text column. """
-        self.text_col = new_col
-        
+    
 
     @property
     def cluster_method(self):
@@ -88,11 +78,24 @@ class DocCluster:
             self._method = repr(new_method)
             self._clusterer = new_method
             self._preconfig = False
-    # Public setter for .cluster_method
+
+
+    # Update methods
+
+    def update_df(self, new_df):
+        """ Replace the DataFrame data. """
+        self.df = new_df
+
+    def update_text_col(self, new_col):
+        """ Replace the label of the text column. """
+        self.text_col = new_col
+    
     def update_cluster_method(self, new_method):
         """ """
         self.cluster_method = new_method
 
+
+    # Internal methods
 
     def _make_features(self,
                        level: int,
@@ -112,7 +115,7 @@ class DocCluster:
         level : int
             Feature level.
                 > 1 = First-order cluster featurization
-                > 2 = Second-order cluster featurization
+                > 2+ = Second-order cluster featurization
                 > ...
 
         use_level : int
@@ -301,18 +304,20 @@ class DocCluster:
             cluster_params['metric'] = 'cosine'
         if cluster_params.get('n_jobs') is None:
             cluster_params['n_jobs'] = -1
+
         # Model-specific parameters
-        if this_method == 'dbscan':
+        if self.cluster_method == 'dbscan':
             if cluster_params.get('eps') is None:
                 if level == 1:
                     cluster_params['eps'] = 0.75
                 else:
                     cluster_params['eps'] = 0.01
-        if this_method == 'hdbscan':
+        if self.cluster_method == 'hdbscan':
             if cluster_params.get('min_cluster_size') is None:
                 cluster_params['min_cluster_size'] = cluster_params['min_samples']
-        if this_method == 'optics':
-            pass
+        if self.cluster_method == 'optics':
+            if cluster_params.get('min_cluster_size') is None:
+                cluster_params['min_cluster_size'] = cluster_params['min_samples']
         
         # Labels for new features
         cluster_id_col = f'lvl{level}_cluster'
@@ -327,7 +332,7 @@ class DocCluster:
                 print(f"Making Level {level} Clusters...")
             # Rearrange the TF-IDF vectors into their own DataFrame
             tfidf_df = pd.DataFrame.from_dict(dict(zip(self.df[use_tfidf_col].index, self.df[use_tfidf_col].values))).T.fillna(0)
-            clusters = clusterer(**cluster_params).fit(tfidf_df)
+            clusters = self._clusterer(**cluster_params).fit(tfidf_df)
             self.df[cluster_id_col] = clusters.labels_ 
             if self.verbose:
                 print(f"Clusters complete.\n")
@@ -343,17 +348,16 @@ class DocCluster:
                     print(f"{samp_size - samp_size2} rows dropped from the sample.\n")
 
             # Create "topic" label for each cluster ID
-            # schema: "{top avg tf-idf score}-[{top 20 individual terms by avg tf-idf score}]"
+            # like: "{top avg tf-idf score}-[{top 20 individual terms by avg tf-idf score}]"
             if self.verbose:
                 print(f"Creating term labels for each cluster...")
-            # FIXME
+            # FIXME?
             for cluster_id in self.df[cluster_id_col].unique():
-                #top20_1grams = tfidf_df.loc[self.df[cluster_id_col].loc[self.df[cluster_id_col] == cluster_id].index, 
-                top20_1grams = tfidf_df.loc[self.df.loc[self.df[cluster_id_col] == cluster_id].index, 
-                                            [col for col in tfidf_df.columns if '-' not in col]]\
-                                            .mean().sort_values(ascending=False)[:20]
-                cluster_lbl = f'{top20_1grams.iloc[0]:.4f}-' + '-'.join(top20_1grams.index)
-                self.df.loc[self.df[cluster_id_col] == cluster_id, cluster_lbl_col] = cluster_lbl
+                self._make_cluster_vocab(tfidf=tfidf_df,
+                                        main_level=1,
+                                        main_level_id=cluster_id,
+                                        #top_n_terms: int = 20
+                                        )
             if self.verbose:
                 print(f"Term labels complete.\n")
             
@@ -376,7 +380,7 @@ class DocCluster:
                 # Rearrange the TF-IDF vectors into their own DataFrame
                 tfidf_df = pd.DataFrame.from_dict(dict(zip(this_cluster_tfidf.index, this_cluster_tfidf.values))).T.fillna(0)
                 # Make sub-clusters
-                clusters = clusterer(**cluster_params).fit(tfidf_df)
+                clusters = self._clusterer(**cluster_params).fit(tfidf_df)
                 self.df.loc[this_cluster_idxs, cluster_id_col] = clusters.labels_ 
                 # Backfill unclustered rows with -1
                 self.df[cluster_id_col].fillna(-1, inplace=True)
@@ -392,7 +396,6 @@ class DocCluster:
                 #for sub_cluster_id in self.df.loc[this_cluster_idxs, cluster_id_col].unique():
                 for sub_cluster_id in set(clusters.labels_):
                     sub_cluster_mask = (self.df[cluster_id_col]==sub_cluster_id) & (self.df[use_cluster_id_col]==cluster_id)
-                    #top20_1grams = tfidf_df.loc[self.df[cluster_id_col].loc[sub_cluster_mask].index, 
                     top20_1grams = tfidf_df.loc[self.df.loc[sub_cluster_mask].index, 
                                                 [col for col in tfidf_df.columns if '-' not in col]]\
                                             .mean().sort_values(ascending=False)[:20]
@@ -415,6 +418,63 @@ class DocCluster:
         self.df[cluster_id_col] = self.df[cluster_id_col].astype(int)
 
 
+    def _make_cluster_vocab(self,
+                            tfidf: pd.DataFrame,
+                            main_level: int,
+                            main_level_id: int,
+                            base_level: int | None = None,
+                            base_level_id: int | None = None,
+                            top_n_terms: int = 20) -> None:
+        """
+        Get the defining vocabulary of each cluster.
+
+        Parameters
+        ----------
+        tfidf : pandas DataFrame
+            DataFrame of TF-IDF terms and scores for documents in the cluster,
+            as produced in the _make_clusters() method.
+            
+        main_level : int
+            Level of the cluster set of interest.
+
+        main_level_id : int
+            The cluster label of the cluster of interest.
+
+        base_level : int, optional
+            Level of the basis cluster, if main_level is a sub-cluster.
+
+        base_level_id : int, optional
+            Basis cluster label, if main_level is a sub-cluster.
+
+        top_n_terms : int, default 20
+            Number of top tf-idf score terms to return.
+        """
+        # Read these features
+        main_cluster_id_col = f'lvl{main_level}_cluster'
+        base_cluster_id_col = f'lvl{base_level}_cluster'
+        # Create this feature
+        cluster_lbl_col = f'lvl{main_level}_cluster_vocab'
+
+        # Identify members of the (sub-)cluster
+        cluster_mask = self.df[main_cluster_id_col] == main_level_id
+        if base_level is not None:
+            base_cluster_mask = self.df[base_cluster_id_col] == base_level_id
+            cluster_mask = cluster_mask & base_cluster_mask
+
+        # Top individual terms (no 2-grams or higher)
+        top_1grams = tfidf.loc[self.df.loc[cluster_mask].index, 
+                               [col for col in tfidf.columns if '-' not in col]]\
+                            .mean().sort_values(ascending=False)[:top_n_terms]
+        
+        # Concatenate top terms; prefix with the highest tf-idf score
+        cluster_lbl = f'{top_1grams.iat[0]:.4f}-' + '-'.join(top_1grams.index)
+        
+        # Apply the label to cluster members
+        self.df.loc[cluster_mask, cluster_lbl_col] = cluster_lbl
+
+
+    # Primary methods
+
     def make_base_clusters(self,
                            force: bool = True,
                            drop_unclustered: bool = True,
@@ -424,12 +484,12 @@ class DocCluster:
                            min_df: float = 0.005,
                            max_df: float = 0.05,
                            tfidf_norm: bool | Literal['max'] = True,
-                           cluster_method: Literal['dbscan', 'hdbscan', 'optics'] = 'dbscan',
+                           cluster_method: Literal['dbscan', 'hdbscan', 'optics', 'hierarchy'] | object = 'dbscan',
                            **cluster_params):
         """
         First-order clustering.
 
-        Uses stemmed (truncated) versions of bill vocabularies
+        Uses stemmed (truncated) versions of document vocabularies
         in order to maximize term-matching and topic generalization.
         
         The collection of word stems in each bill text in the sample 
@@ -445,6 +505,14 @@ class DocCluster:
 
         Parameters
         ----------
+        force : bool, default True
+            TODO
+
+        drop_unclustered : bool, default True
+            Drops all observations from the DataFrame that could not be
+            assigned to a cluster.
+
+        
         gram_n : int, default 4
             Bag of Words (BoW) includes stemmed (truncated) n-grams
             for n = 1 to gram_n.
@@ -477,7 +545,6 @@ class DocCluster:
         self._make_clusters(level=1,
                             use_level=1,
                             drop_unclustered=drop_unclustered,
-                            cluster_method=cluster_method,
                             **cluster_params)
         if self.verbose:
             print("Cluster processing complete.")
@@ -625,11 +692,27 @@ class DocCluster:
                             use_level=use_level,
                             use_clusters=prior_clusters,
                             drop_unclustered=drop_unclustered,
-                            cluster_method=cluster_method,
                             **cluster_params)
         if self.verbose:
             print("Cluster processing complete.")
-            
+
+
+    def viz_df( self,
+                level: int) -> pd.DataFrame:
+        """ 
+        Return the current collection with only two features: 
+        > tfidf column: 'lvl{level}_tfidf'
+        > cluster column: 'lvl{level}_cluster
+
+        Parameters
+        ----------
+        level: int
+            The level ID of the clusters to visualize.
+        """
+        tfidf_col = f'lvl{level}_tfidf',
+        cluster_col = f'lvl{level}_cluster'
+        return(self.df[[tfidf_col, cluster_col]])
+
 
     def get_cluster_centroids(self):
         """
@@ -640,24 +723,13 @@ class DocCluster:
         pass
 
 
-    def get_cluster_vocab(self,
-                          level: Literal['topic', 'cluster'],
-                          idx: int):
+    def get_cluster_bills(self,
+                          main_level: int,
+                          main_level_id: int,
+                          base_level: int | None = None,
+                          base_level_id: int | None = None) -> list:
         """
-        Get the defining vocabulary of each cluster.
-        TODO
-
-        Parameters
-        ----------
-        level : {'topic', 'cluster'}
-            Clustering level to analyze.
-        """
-        pass
-
-
-    def get_cluster_bills(self):
-        """
-        Get the bills in each cluster
+        Get the bills in target cluster
         
         TODO
         """

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "eunomia"
 version = "1.0.0"
 authors = [
-  { name="David Owens", email="davidjayowens+eunomia@gmail.com" },
+  { name="David J Owens", email="davidjayowens+eunomia@gmail.com" },
 ]
 description = "Analyzes state-level legislation via NLP and cluster analysis. Uses bill texts from Legiscan."
 readme = "README.md"
@@ -21,11 +21,12 @@ dependencies = [
   "requests",
   "pandas",
   "nltk",
-  "scikit-learn"
+  "scikit-learn",
+  "plotly",
+  "bs4",
+  "tika",
+  "striprtf"
 ]
-[project.optional-dependencies]
-VIZ = ["plotly"]
-LS = ["bs4", "tika", "striprtf"]
 
 [project.urls]
 Homepage = "https://github.com/davidjayowens/eunomia"
