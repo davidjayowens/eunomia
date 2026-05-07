@@ -1,3 +1,4 @@
+from typing import Literal
 import pandas as pd
 
 import plotly.graph_objects as go
@@ -21,7 +22,8 @@ class PlotPolars:
                     df: pd.DataFrame,
                     tfidf_col: str, 
                     cluster_col: str, 
-                    num_feats: int = 16):
+                    max_feats: int = 16,
+                    scale_scope: Literal['collection', 'cluster', 'feature', 'vector'] = 'collection'):
         """
         Visualizer for document clusters
 
@@ -30,15 +32,110 @@ class PlotPolars:
         df : pandas DataFrame
             Clustered data, as produced by eunomia.clustering.DocCluster.
 
-        tfidf_col: str
+        tfidf_col : str
             Label of the tf-idf column used in clustering.
 
-        cluster_col: str
+        cluster_col : str
             Label of the column containing cluster IDs.
 
-        num_feats: int, default 16
-            Reduce the number of tf=idf features to num_feats (via PCA)
-            for visualization.
+        max_feats : int, default 16
+            Reduce the number of tf-idf features to max_feats (via PCA)
+            for visualization. Actual number of features will be 
+            min(max_feats, n_samples, n_features).
+
+        scale_scope : one of {'collection', 'cluster', 'feature', 'vector'}, default 'collection'
+            Before visualizing the feature-reduced tf-idf vectors, data is 
+            adjusted to a [0,1] scale in preparation for plotting.
+
+            The scale_scope param defines how this scaling is applied to the results,
+            such that 0 and 1 correspond to:
+                > 'collection' - the min/max values across all vectors and all clusters
+                > 'cluster' - the min/max values on a per-cluster basis (all vectors & features)
+                > 'feature' - the min/max values on a per-feature basis (all vectors & clusters)
+                > 'vector' - the min/max values on a per-vector basis (all features)
+
+            NOTE: Scales other than 'collection' can produce more aesthetically interesting
+            plots, but some comparative value is necessarily lost. 
+            
+            Examples of data scaling:
+
+                Sample data
+                -----------
+                cluster 1:
+                    vector 1: [0.01,        0.02,           0.05]
+                    vector 2: [0.15,        0.30,           0.75]
+                cluster 2:
+                    vector 1: [0.50,        0.01,           0.75]
+                    vector 2: [0.60,        0.15,           0.98]
+
+                'collection' scaling
+                ---------
+                cluster 1:
+                    vector 1: [0.0,         0.01030928,     0.04123711]
+                    vector 2: [0.1443299,   0.29896907,     0.7628866]
+                cluster 2:
+                    vector 1: [0.50515464,  0.0,            0.7628866]
+                    vector 2: [0.60824742,  0.1443299,      1.0]
+                Pros:
+                > Minimally transformative of the underlying data
+                > Relative values are still proportional to each other, 
+                  across all clusters/features/vectors
+                Cons:
+                > Some flattening of data, less dynamic range on a
+                  per-cluster/feature/vector basis
+                
+                'cluster' scaling
+                -----------
+                cluster 1:
+                    vector 1: [0.0,         0.01351351, 0.05405405]
+                    vector 2: [0.18918919,  0.39189189, 1.0]
+                cluster 2:
+                    vector 1: [0.50515464,  0.0,        0.7628866]
+                    vector 2: [0.60824742,  0.1443299,  1.0]
+                Pros:
+                > Preserves relationships of values across vectors and 
+                  features within a cluster
+                > Greater dynamic range within a cluster; values not flattened 
+                  by extremes in other clusters
+                Cons:
+                > Reduced ability to compare values across clusters
+
+                'feature' scaling
+                ------------
+                cluster 1:
+                    vector 1: [0.0,         0.03448276,     0.0]
+                    vector 2: [0.23728814,  1.0,            0.75268817]
+                cluster 2:
+                    vector 1: [0.83050847,  0.0,            0.75268817]
+                    vector 2: [1.0,         0.48275862,     1.0]
+                Pros:
+                > Within each feature, shows which vectors & clusters have 
+                  the highest/lowest values
+                Cons:
+                > Loses comparative value between features for any given cluster/vector
+
+                'vector' scaling
+                -----------
+                cluster 1:
+                    vector 1: [0.0,         0.25,   1.0]
+                    vector 2: [0.0,         0.25,   1.0]
+                cluster 2:
+                    vector 1: [0.66216216,  0.0,    1.0]
+                    vector 2: [0.54216867,  0.0,    1.0]
+                Pros:
+                > Within each vector, shows which features have the 
+                  highest/lowest values
+                Cons:
+                > Loses comparative value between clusters/vectors
+                
+                EG, A cluster where features 1 and 2 are all high, but features 3 and 4 are all low...
+
+                    means that features 1 and 2 score relatively higher within this cluster
+                    compared to features 3 and 4, but says nothing about the relatiionship
+                    between the scores of individual features between clusters.
+
+                
+                
 
         """
         self.df = df
@@ -46,12 +143,13 @@ class PlotPolars:
         # DataFrame used in plotting and labeling clusters
         self.update_polar_df(   tfidf_col=tfidf_col,
                                 cluster_col=cluster_col,
-                                num_feats=num_feats)
-        # Also sets self.tfidf_col, self.cluster_col, and self.num_feats
+                                max_feats=max_feats,
+                                scale_scope=scale_scope)
+        # Also sets self.tfidf_col, self.cluster_col, self.max_feats, self.scale_scope
         
 
     def __repr__(self):
-        return(f"PlotPolars(df=<pd.DataFrame>, tfidf_col={self.tfidf_col}, cluster_col={self.cluster_col}, num_feats={self.num_feats})")
+        return(f"PlotPolars(df=<pd.DataFrame>, tfidf_col={self.tfidf_col}, cluster_col={self.cluster_col}, max_feats={self.max_feats})")
     
 
     @property
@@ -80,14 +178,52 @@ class PlotPolars:
         """
         # Matrix of tf-idf scores; rows = documents, columns = terms
         tfidf_df =  pd.DataFrame.from_dict(dict(zip(self.df[self.tfidf_col].index, self.df[self.tfidf_col].values))).T.fillna(0)
+        tfidf_feats = tfidf_df.shape[1]
+
+        # Reduce (by PCA) to the max_feats to use in visualization
+        num_feats = min(self.max_feats, tfidf_df.shape[0], tfidf_df.shape[1])
+        pca_df = pd.DataFrame(PCA(n_components=num_feats).fit_transform(tfidf_df), index=self.df[self.tfidf_col].index)
         
-        # Reduce (by PCA) to the num_feats to use in visualization
-        pca_df = pd.DataFrame(PCA(n_components=self.num_feats).fit_transform(tfidf_df), index=self.df[self.tfidf_col].index)
-        # Normalize from [-1,1] to [0,1] scale
-        pca_df = (pca_df + 1)/2
+        # Scale all data to [0,1] range
+        if self.scale_scope == 'collection':
+            # Scaling based on min and max values anywhere in pca_df
+            min_val = pca_df.min(axis=None)
+            max_val = pca_df.max(axis=None)
+            diff_val = max_val - min_val
+
+            pca_scaled = (pca_df - min_val) / diff_val
+
+        elif self.scale_scope == 'cluster':
+            pca_scaled = pca_df.head(0)
+
+            for cluster_id in self.df[self.cluster_col].unique():
+                cluster = pca_df.loc[self.df.loc[self.df[self.cluster_col]==cluster_id].index]
+                                     
+                min_val = cluster.min(axis=None)
+                max_val = cluster.max(axis=None)
+                diff_val = max_val - min_val
+
+                cluster_scaled = (cluster - min_val) / diff_val 
+                pca_scaled = pd.concat([pca_scaled, cluster_scaled])    
+        
+        elif self.scale_scope == 'feature':
+            # Scale each feature individually (column-wise)
+            min_vals = pca_df.min()
+            max_vals = pca_df.max()
+            diff_vals = max_vals - min_vals
+
+            pca_scaled = pca_df.sub(min_vals, axis=1).div(diff_vals, axis=1)
+
+        elif self.scale_scope == 'vector':
+            # Scale each vector individually (row-wise)
+            min_vals = pca_df.min(axis=1)
+            max_vals = pca_df.max(axis=1)
+            diff_vals = max_vals - min_vals
+
+            pca_scaled = pca_df.sub(min_vals, axis=0).div(diff_vals, axis=0)
 
         # Assemble the version of the DF for plotting with polar coordinates
-        polar_df = pd.DataFrame(pca_df.stack(level=0)).reset_index(level=1, names=['','pca_feat'])
+        polar_df = pd.DataFrame(pca_scaled.stack(level=0)).reset_index(level=1, names=['','pca_feat'])
         polar_df = polar_df.merge(self.df[self.cluster_col], how='left', left_index=True, right_index=True)
         polar_df.rename(columns={0:'pca_score', self.cluster_col:'cluster_id'}, inplace=True)
         for str_feat in ['pca_feat', 'cluster_id']:
@@ -99,16 +235,34 @@ class PlotPolars:
     def update_polar_df(self,
                         tfidf_col: str | None = None,
                         cluster_col: str | None = None,
-                        num_feats: int | None = None):
+                        max_feats: int | None = None,
+                        scale_scope: str | None = None):
         """ 
         Update the object's polar_df with new parameters.
         """
+        df_cols = self.df.columns.tolist()
+
         if tfidf_col:
+            if tfidf_col not in df_cols:
+                raise ValueError(f"Invalid value for parameter: {tfidf_col=}\nMust be one of {df_cols}")
+            
             self.tfidf_col = tfidf_col
+
         if cluster_col:
+            if cluster_col not in df_cols:
+                raise ValueError(f"Invalid value for parameter: {cluster_col=}\nMust be one of {df_cols}")
+            
             self.cluster_col = cluster_col
-        if num_feats:
-            self.num_feats = num_feats
+
+        if max_feats:
+            self.max_feats = int(max_feats)
+
+        if scale_scope:
+            valid_scale_scopes = ['collection', 'cluster', 'feature', 'vector']
+            if scale_scope.lower() not in valid_scale_scopes:
+                raise ValueError(f"Invalid value for parameter: {scale_scope=}\nMust be one of {valid_scale_scopes}")
+            
+            self.scale_scope = scale_scope.lower()
 
         self._make_polar_df()
         
@@ -148,7 +302,8 @@ class PlotPolars:
             > colorscale_low : float, low end of the color spectrum, default 0.0
             > colorscale_high : float, high end of the color spectrum, default 1.0
             > horizontal_spacing : float, horizontal distance between subplots, default 0.0
-            > vertical_spacing : float, vertical distance between subplots, default 0.1
+            > vertical_spacing : float, vertical distance between subplots, default 0.0
+                >> NOTE: Max value is 1 / (nrows - 1)
             > paper_bgcolor : plotly color value, fill color outside the polar plot, default black 
             > plot_bgcolor : plotly color value, fill color inside the polar plot, default black
             > grid_color : plotly color value, line color of the boundary/axes of the polar plot, default grey
@@ -208,13 +363,13 @@ class PlotPolars:
         fig = make_subplots(rows=rows, cols=cols,
                             specs=specs, 
                             horizontal_spacing=kwargs.get('horizontal_spacing',0),
-                            vertical_spacing=kwargs.get('vertical_spacing',0.1))
+                            vertical_spacing=kwargs.get('vertical_spacing',0.0))
             
         # Add trace for each cluster
         row = 1
         col = 1
         for cluster in sorted_cluster_ids:
-            cluster_df = self.df.loc[self.df.cluster_id==cluster]
+            cluster_df = self.polar_df.loc[self.polar_df.cluster_id==cluster]
             fig.add_trace(  go.Scatterpolar(r=cluster_df['pca_score'], 
                                             theta=cluster_df['pca_feat'],
                                             mode='lines', 

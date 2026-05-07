@@ -113,10 +113,9 @@ class DocCluster:
         vectors for a set of bills; these will be used by _make_clusters().
 
         level : int
-            Feature level.
-                > 1 = First-order cluster featurization
-                > 2+ = Second-order cluster featurization
-                > ...
+            Feature level. Used to create feature labels like 'lvl{}_tfidf'.
+            NOTE: Many downstream functions presume that basis features are 
+            at level=1.
 
         use_level : int
             Feature level of term frequencies to use as basis.
@@ -158,12 +157,12 @@ class DocCluster:
                   f"TF-IDF normalization: {tfidf_norm}\n"
                   f"\nFeature labels: {tf_col}, {tfidf_col}\n")
 
-        if level == 1:
+        if level == use_level:  # Basis clustering
             # Make BoW
             if ('bow' not in self.df.columns) or force:
                 if self.verbose:
                     print("Making Bag of Words...")
-                self.df['bow'] = self.df.apply(lambda x: make_bow(text=x[self.col], filter=filter_bow, stem=stem_bow), axis=1)
+                self.df['bow'] = self.df.apply(lambda x: make_bow(text=x[self.text_col], filter=filter_bow, stem=stem_bow), axis=1)
                 if self.verbose:
                     print("Bag of Words complete.\n")
 
@@ -211,7 +210,7 @@ class DocCluster:
                 # Make BoW
                 if self.verbose:
                     print("Remaking Bag of Words...")
-                self.df['bow'] = self.df.apply(lambda x: make_bow(text=x[self.col], filter=filter_bow, stem=stem_bow), axis=1)
+                self.df['bow'] = self.df.apply(lambda x: make_bow(text=x[self.text_col], filter=filter_bow, stem=stem_bow), axis=1)
                 if self.verbose:
                     print("Bag of Words complete.\n")
 
@@ -227,8 +226,8 @@ class DocCluster:
                 # Use new TF vector for remaining features
                 use_tf_col = tf_col
 
-                # Create placeholder for TF-IDF vectors
-                self.df[tfidf_col] = None
+            # Create placeholder for TF-IDF vectors
+            self.df[tfidf_col] = None
 
             # Sub-cluster featurization
             for cluster_id in use_clusters:
@@ -511,7 +510,6 @@ class DocCluster:
         drop_unclustered : bool, default True
             Drops all observations from the DataFrame that could not be
             assigned to a cluster.
-
         
         gram_n : int, default 4
             Bag of Words (BoW) includes stemmed (truncated) n-grams
@@ -525,8 +523,6 @@ class DocCluster:
             Maximum document frequency value for inclusion in the
             TF-IDF vocabulary vector.
 
-        min_cos : float, default 0.0
-            Minimum cosine similarity for inclusion in a cluster.
         """
         if self.verbose:
             print("Begin feature processing...")
@@ -698,20 +694,48 @@ class DocCluster:
 
 
     def viz_df( self,
-                level: int) -> pd.DataFrame:
+                base_level: int = 1,
+                base_cluster: int | None = None,
+                sub_level: int | None = None) -> pd.DataFrame:
         """ 
-        Return the current collection with only two features: 
-        > tfidf column: 'lvl{level}_tfidf'
-        > cluster column: 'lvl{level}_cluster
+        Return the current collection with only two features, used by 
+        eunomia.visualizer for making plots: 
+        > tfidf column: Contains TF-IDF vectors
+        > cluster column: Contains cluster labels
+
+        If looking at sub-clusters, only the sub-clusters of a given
+        base cluster are included in results.
 
         Parameters
         ----------
-        level: int
-            The level ID of the clusters to visualize.
+        base_level: int, default 1
+            Level ID of the basis clusters. If visualizing sub-clusters,
+            should correspond to use_level param from clustering.make_sub_clusters().
+
+        base_cluster: int, optional
+            Cluster ID of the the sub-clusters' base cluster. Not used when 
+            visualizing base clusters.
+        
+        sub_level: int, optional
+            Level ID of the sub-clusters. Not used when visualizing base clusters.
+            
         """
-        tfidf_col = f'lvl{level}_tfidf',
-        cluster_col = f'lvl{level}_cluster'
-        return(self.df[[tfidf_col, cluster_col]])
+        if sub_level:
+            tfidf_col = f'lvl{sub_level}_tfidf'
+            cluster_col = f'lvl{sub_level}_cluster'
+
+            base_cluster_col = f'lvl{base_level}_cluster'
+
+            return(self.df.loc[(self.df[base_cluster_col] == base_cluster)
+                             & (self.df[cluster_col] != -1),
+                                [tfidf_col, cluster_col]])
+
+        else:
+            tfidf_col = f'lvl{base_level}_tfidf'
+            cluster_col = f'lvl{base_level}_cluster'
+            
+            return(self.df.loc[(self.df[cluster_col] != -1), 
+                                [tfidf_col, cluster_col]])
 
 
     def get_cluster_centroids(self):

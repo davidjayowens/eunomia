@@ -274,7 +274,7 @@ def make_vocab(df: pd.Series,
     return(vocab)
 
 
-def unit_vector(vector: pd.Series[float | int]) -> list:
+def unit_vector(vector: pd.Series[float | int]) -> pd.Series:
     """ 
     Returns the normalized version of the vector, using 
     Euclidean normalization.
