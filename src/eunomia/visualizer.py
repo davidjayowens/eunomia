@@ -139,13 +139,20 @@ class PlotPolars:
 
         """
         self.df = df
+        # Stored internally as self._df - see attribute getter/setter methods below
 
         # DataFrame used in plotting and labeling clusters
         self.update_polar_df(   tfidf_col=tfidf_col,
                                 cluster_col=cluster_col,
                                 max_feats=max_feats,
                                 scale_scope=scale_scope)
-        # Also sets self.tfidf_col, self.cluster_col, self.max_feats, self.scale_scope
+        # Also sets:
+        # self.tfidf_col 
+        # self.cluster_col 
+        # self.max_feats 
+        # self.scale_scope
+        # self.pca_model
+        # self.polar_df
         
 
     def __repr__(self):
@@ -159,7 +166,9 @@ class PlotPolars:
     def df(self, new_df):
         if not isinstance(new_df, pd.DataFrame):
             raise ValueError("Invalid value for .df - must be pandas DataFrame.")
-        self._df = new_df.copy()
+        
+        # Enforce RangeIndex - this will be used to merge with PCA-reduced features in .plot()
+        self._df = new_df.reset_index(drop=True).copy()
 
 
     @property
@@ -180,9 +189,11 @@ class PlotPolars:
         tfidf_df =  pd.DataFrame.from_dict(dict(zip(self.df[self.tfidf_col].index, self.df[self.tfidf_col].values))).T.fillna(0)
         tfidf_feats = tfidf_df.shape[1]
 
-        # Reduce (by PCA) to the max_feats to use in visualization
+        # Reduce (by PCA) to a number of features that can be visualized
         num_feats = min(self.max_feats, tfidf_df.shape[0], tfidf_df.shape[1])
-        pca_df = pd.DataFrame(PCA(n_components=num_feats).fit_transform(tfidf_df), index=self.df[self.tfidf_col].index)
+        self.pca_model = PCA(n_components=num_feats).fit(tfidf_df)
+        
+        pca_df = pd.DataFrame(self.pca_model.transform(tfidf_df), index=self.df.index)
         
         # Scale all data to [0,1] range
         if self.scale_scope == 'collection':
@@ -244,13 +255,13 @@ class PlotPolars:
 
         if tfidf_col:
             if tfidf_col not in df_cols:
-                raise ValueError(f"Invalid value for parameter: {tfidf_col=}\nMust be one of {df_cols}")
+                raise ValueError(f"Invalid value for parameter: {tfidf_col = }\nMust be one of {df_cols}")
             
             self.tfidf_col = tfidf_col
 
         if cluster_col:
             if cluster_col not in df_cols:
-                raise ValueError(f"Invalid value for parameter: {cluster_col=}\nMust be one of {df_cols}")
+                raise ValueError(f"Invalid value for parameter: {cluster_col = }\nMust be one of {df_cols}")
             
             self.cluster_col = cluster_col
 
