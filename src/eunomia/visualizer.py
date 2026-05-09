@@ -1,4 +1,5 @@
 from typing import Literal
+import numpy as np
 import pandas as pd
 
 import plotly.graph_objects as go
@@ -308,29 +309,37 @@ class PlotPolars:
             If True, immediately displays the visualization;
             if False, returns the final plot as an object.
 
-        **kwargs : optional plotly keyword parameters
-            > colorscale : str, plotly colorscale, default 'turbo_r'
-            > colorscale_low : float, low end of the color spectrum, default 0.0
-            > colorscale_high : float, high end of the color spectrum, default 1.0
-            > horizontal_spacing : float, horizontal distance between subplots, default 0.0
-            > vertical_spacing : float, vertical distance between subplots, default 0.0
-                >> NOTE: Max value is 1 / (nrows - 1)
-            > paper_bgcolor : plotly color value, fill color outside the polar plot, default black 
-            > plot_bgcolor : plotly color value, fill color inside the polar plot, default black
-            > grid_color : plotly color value, line color of the boundary/axes of the polar plot, default grey
-            > rounded_plot : bool, False makes plat polygonal, default True
-            > fill_traces : bool, True fills the interior of each plot, default False
-            > title : str, sets plot title, default "Plot of TF-IDF vectors"
-            > showlegend : bool, controls the legend display, default True
-            > template : str, plotly color template, default 'plotly_dark'
+        **kwargs : optional settings
             > autosize : bool, automatically configure plot size, default True
+                >> NOTE: autosize and width/height are mutually exclusive!
             > width : int, sets plot width, default is autosize=True
             > height : int, sets plot height, default is autosize=True
-                >> NOTE: autosize and width/height are mutually exclusive!
-            > margin : dict, sets plot margins, optional
+            > horizontal_spacing : float, horizontal distance between subplots if max_subplot_cols>1, default 0.0
+                >> NOTE: Max value is 1 / (ncols - 1)
+            > vertical_spacing : float, vertical distance between subplots if nrows>1, default 0.0
+                >> NOTE: Max value is 1 / (nrows - 1)
+            > margin : dict, sets plot margins
                 >> EG: margin={'l':10,'r':10,'t':10,'b':10}
-            > minreducedwidth : int, sets minimum (sub)plot width, optional
-            > minreducedheight : int, sets minimum (sub)plot height, optional
+            > minreducedwidth : int, sets minimum (sub)plot width
+            > minreducedheight : int, sets minimum (sub)plot height
+            
+            > template : str, plotly color template, default 'plotly_dark'
+            > paper_bgcolor : str, plotly color value, fill color outside the polar plot, default black 
+            > plot_bgcolor : str, plotly color value, fill color inside the polar plot, default black
+            > grid_color : plotly color value, line color of the boundary/axes of the polar plot, default grey
+            > colorscale : str, plotly colorscale for vector plots, default 'turbo_r'
+            > colorscale_low : float, low end of the color spectrum, default 0.0
+            > colorscale_high : float, high end of the color spectrum, default 1.0
+            > fill_traces : bool, True fills the interior of each plot, default False
+            
+            > title : str, sets plot title, default "Plot of TF-IDF vectors"
+
+            > showlegend : bool, controls the legend display, default True
+            > ticklabel_nterms : int, display top n terms contributing to each PCA-reduced feature, default 0
+            > ticklabel_radius : int, distance of tick labels from plot perimeter, default 1
+            
+            > rounded_plot : bool, False makes plat polygonal, default True
+            
     
         """
 
@@ -438,10 +447,72 @@ class PlotPolars:
         if kwargs.get('paper_bgcolor'):
             fig.update_layout(paper_bgcolor=kwargs.get('paper_bgcolor'))
 
+        if kwargs.get('ticklabel_nterms'):
+            try:
+                n_terms = int(kwargs.get('ticklabel_nterms'))                
+                if n_terms < 0:
+                    raise Exception
+                
+                label_dist = int(kwargs.get('ticklabel_radius', 0))
+                if label_dist < 0:
+                    raise Exception
+
+            except:
+                raise ValueError(f'Invalid parameters:\n'
+                                 f'ticklabel_nterms = {kwargs.get('ticklabel_nterms')}\n'
+                                 f'ticklabel_radius = {kwargs.get('ticklabel_radius')}\n'
+                                  'Values must be non-negative integers (>= 0).')
+            if n_terms > 0:
+                tick_labels = self._pca_feature_labels(n_terms=n_terms)
+
+                fig.update_polars({'angularaxis': {
+                                        'showticklabels': True,
+                                        'ticks': 'outside',
+                                        'labelalias': tick_labels,
+                                        'ticklen': label_dist
+                                    }})
+
         if inplace:
             fig.show()
         else:
             return(fig)
+
+
+    def _pca_feature_labels(self, 
+                            n_terms: int = 3, 
+                            abs: bool = True):
+        """ 
+        Get the n_terms number of feature labels from the source data
+        that contribute the most variability to each feature in the 
+        PCA feature-reduced plot data.
+
+        Paramters
+        ---------
+        n_terms : int, default 3
+            The number of terms/labels to return for each output feature.
+
+        abs : bool, default True
+            If True, takes the absolute value of the variability scores when
+            determining the top contributors; if False, only positive contribution
+            is considered.
+
+        """
+        # Feature names are uniform across all the vectors; grabbing the first one arbitrarily
+        feat_names = self.df.at[0,self.tfidf_col].index
+        
+        components = self.pca_model.components_.copy()
+        if abs:
+            components = np.abs(components)
+        
+        n_components = len(components)
+
+        labels = []
+        for i in range(n_components):
+            labels.append(', '.join(feat_names[components[i].argsort()[-1:-(n_terms+1):-1]]))
+        
+        results = {i:lbl for i,lbl in zip(range(n_components), labels)}
+
+        return(results)
 
 # END OF PlotPolars class
 
