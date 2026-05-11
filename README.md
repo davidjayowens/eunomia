@@ -1,26 +1,51 @@
 # eunomia
 Document clustering, visualization, and analysis of American state-level legislation.
 
+## What is Eunomia?  
+This project was inspired by groups like the American Legislative Exchange Council (ALEC) and the Heritage Foundation, which produce example bills to promote a specific legislative and regulatory vision across the country. On their websites (as of May 2026), you can find model legislation such as: 
+- [Barring undocumented immigrants from operating any motor vehicle](https://alec.org/model-policy/protect-highways-act/)
+- [Charging undocumented K-12 students tuition to attend public school](https://www.heritage.org/model-legislation/charging-k-12-public-school-tuition-illegal-alien-students-act)
+- [Barring state funds from being provided to lawyers and legal organizations that offer services to undocumented immigrants](https://www.heritage.org/model-state-statute-barring-funding-lawyers-who-represent-illegal-aliens)
+
+The example bills produced by these special interest groups vary widely, but there are some clear themes.
+
 ## Who actually produces our legislation? 
-The goal of this project is to help identify groups of bills introduced across multiple states and/or sessions which can be traced back to a common source. 
+The goal of this project is to help identify groups of bills which can be traced back to a common source, with a particular focus on bills introduced across multiple states. Eunomia applies natural language processing (NLP) techniques to perform forensic authorship, identifying the groups and individuals actually responsible for creating them.
 
-Special interest groups from across the political spectrum have become ever more adept at crafting and promoting "model" legislation in service of their political agendas, essentially handing pre-written bills to state lawmakers. Those lawmakers, in turn, often submit the model bills in their state legislatures with only minor edits - if they even bother to modify the language at all. [Include link to bills submitted completely without alteration or with, eg, "insert state here"]
+Special interest groups from across the political spectrum have become ever more adept at crafting and promoting "model" legislation in service of their political agendas, essentially promoting these pre-written bills, with "INSERT STATE HERE" placeholders, to state lawmakers. The politicians, in turn, often submit the model bills in their state legislatures with only minor edits - if they even bother to modify the language at all.
 
-The process of identifying what issues to legislate on, researching various regulatory schemes, and drafting legislation to effect a particular outcome can be time-consuming and expensive. By providing lawmakers with turnkey bills - which often come with promises of financial support for representatives who agree to advocate for them - special interest groups and legislators establish a symbiotic relationship. The interest groups make lawmakers' jobs easy by identifying legislatable issues for them, providing ready-to-submit bills on those issues, and promising financial and political support in return for advancing their agenda.
+The process of identifying what issues to legislate on, researching various regulatory schemes, and drafting legislation to promote a particular outcome can be time-consuming and expensive. It also requires a degree of legal expertise that most part-time lawmakers do not have. By providing lawmakers with model bills, special interest groups and legislators establish a symbiotic relationship. The interest groups make lawmakers' jobs easy by identifying legislatable issues for them, providing them with turnkey bills they can champion on the campaign trail; these groups' preferred policy agendas get promoted, and financial and political support are given to lawmakers in exchange.
 
-Noticeably absent from this relationship: the electorate. Special interest groups may have little to no connection to the state(s) where their model legislation is enacted. Further, the texts of model bills are frequently negotiated behind closed doors, with no public oversight or input into this step of the legislative process.
+Noticeably absent from this relationship is the electorate. Special interest groups may have little to no connection to the state(s) where their model legislation is enacted. Further, the texts of model bills are frequently negotiated behind closed doors, with no public oversight or input into this key step of the legislative process.
 
-This raises very serious questions about the nature of American democracy: Who is actually producing the laws that governs us? Whose interests are being served by this system?
+This raises very serious questions about the nature of American democracy: Who is actually producing the laws that govern us? Whose interests are being served by this system?
 
-A lot of attention is paid to the sources of a candidate's campaign contributions as a metric of political influence and bias. Project Eunomia seeks to complement that analysis with a look at the influences on a legislator's material outputs once in office. "Whose homework are they copying?" is, in our view, just as important as, "Who paid to get them elected?"
+A lot of attention is paid to the sources of a candidate's campaign contributions as a metric of political influence and bias. The goal of Eunomia is to complement that analysis with a look at the influences on a legislator's material outputs once in office. "Whose homework are they copying?" is, or should be, just as pertinent as, "Whose money is supporting their campaigns?"
 
+# Data model
+Eunomia uses two-tiered clustering to identify groups of bills by topic (first tier clusters), and then within each general topic, bills are analyzed for fine-grained textual similarity (second tier clusters).
 
-## Why "Project Eunomia"?
+This approach aims to minimize the computational expense of applying unsupervised models to a large number of documents. By filtering out a significant number of common stopwords, truncating ("stemming") terms to their common roots, and limiting the number of terms used to produce tokenized n-grams, the basis clusters (first tier) paint with a relatively broad brush. The idea is that this should capture the general vocabulary of the texts, establishing broad clusters across a given sample. Then, the basis clusters of interest are re-clustered with fewer filters, allowing more detailed lexical features to produce sub-clusters using specific, identifying language that may point to shared authorship.
+
+Topic-level clusters can also be used to identify general trends in legislation across states and over specific time spans.
+
+## How is this different from a standard hierarchical clustering approach?
+Off-the-shelf hierarchical clustering methods featurize the documents in a collection one time, and then use those features to build a comprehensive hierarchy of all available documents.
+
+The standard hierarchical cluster analysis (HCA) methods are either bottom-up (agglomerative) or top-down (divisive). In bottom-up HCA, the two most similar documents would form the initial cluster, with the next-most-similar document then being added recursively until all documents form a single cluster. In the top-down approach, all documents start in a single cluster, which then gets recursively split into two or more clusters until a stopping metric is reached or all documents have been split into a "cluster" of n=1.
+
+Eunomia could be thought of as a form of top-down clustering, although as described above it uses different document features for the first-pass vs second-pass clusters. It also is not exhaustive - after the first pass is complete, sub-clustering is performed only on documents within a specific basis cluster; unclustered documents are excluded from further analysis.
+
+# How to use it
+The `eunomia` package can be installed via pip:
+```
+(TBD)
+```
+
+## Example use and analysis
+The pages in the [demos](demos) folder show example usage and customization options.
+
+# Why "Eunomia"?
 <img align="right" width="200" src="imgs/eunomia.jpg" alt="Eunomia by Herman Rosse" />
 <a href="https://en.wikipedia.org/wiki/Eunomia">Eunomia</a> was a minor Greek deity dedicated to good laws and good governance. May she look favorably upon our work.
 <div style="clear: both;"></div>
-
-# Data model
-Eunomia uses a two-tiered clustering model to identify groups of bills by topic (first tier clusters), and then within each general topic, bills are analyzed for fine-grained textual similarity (second tier clusters).
-
-This two-phase approach aims to minimize the computational expense of applying unsupervised models to a large number of documents. It also enables different modes of analysis, as the topic-level clusters can be used to identify general trends in legislation across states and over specific periods.
