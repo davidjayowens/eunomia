@@ -286,7 +286,7 @@ class Legiscan2Mongo:
         self.decoding_fails = []
 
         # Gather all bills in the current collection
-        # FIXME: Use local .df instead of re-collecting from MongoDB
+        # TODO: Use local .df instead of re-collecting from MongoDB
         if undecoded_only and (state is not None):
             records = list(self.COLL.find({'state':state.upper(), 'text_body':None}))
         elif undecoded_only:
