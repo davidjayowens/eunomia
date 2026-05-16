@@ -42,8 +42,8 @@ The `eunomia` package can be installed via pip:
 (TBD)
 ```
 
-## Example use and analysis
-The pages in the [demos](demos) folder show example usage and customization options.
+## Example runbooks and analysis
+The pages in the [docs](docs) folder walks step by step through the details of the pipeline, with example usage and potential customizations.
 
 # Why "Eunomia"?
 <img align="right" width="200" src="imgs/eunomia.jpg" alt="Eunomia by Herman Rosse" />
