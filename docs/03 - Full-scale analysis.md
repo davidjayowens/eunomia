@@ -1,2 +1,0 @@
-# (Placeholder - WIP)
-This document will eventually show the results of analyzing a large-scale sample of LegiScan bills. This may require the use of cloud computing resources not currently within reach of this project, however.

@@ -42,11 +42,11 @@ class Legiscan2Mongo:
         # Connect to MongoDB and set target DB & collection
         self.mongo_db = mongo_db
         self.mongo_coll = mongo_coll
-        self.MONGO = MongoDF(db=mongo_db, coll=mongo_coll, verbose=verbose)
+        self.MongoDF = MongoDF(db=mongo_db, coll=mongo_coll, verbose=verbose)
 
         # Initialize placeholders
-        self.DF = None              # Used by load_df()
-        self.DATA_FOLDER = None     # Used by load_zips()
+        self.df = None              # Used by load_df()
+        self.data_dir = None     # Used by load_zips()
 
     # END OF __init__
 
@@ -93,13 +93,13 @@ class Legiscan2Mongo:
         if isinstance(subset, list):
             if verbose:
                 print(f"Updating MongoDB using columns: {subset}")
-            self.DF = df[subset]
+            self.df = df[subset]
         else:
             if verbose:
                 print(f"Updating MongoDB using all available columns")
-            self.DF = df
+            self.df = df
 
-        self.MONGO._update_mongo(self.DF)
+        self.MONGO._update_mongo(self.df)
 
         if verbose:
             print(f"MongoDB updates complete.")
@@ -125,7 +125,7 @@ class Legiscan2Mongo:
         verbose : bool, defaults to the value provided to init()
             If True, prints updates during processing.
         """
-        if isinstance(bill_types, int):
+        if isinstance(bill_types, (int,str)):
             bill_types = [bill_types]
         
         if isinstance(bill_types, list):
@@ -260,7 +260,7 @@ class Legiscan2Mongo:
 
     def decode_texts(self, 
                      state: str | None = None,
-                     undecoded_only: bool = False,
+                     undecoded_only: bool = True,
                      verbose: bool = False) -> str:
         """
         Decode the base64-encoded bill texts in the collection.
@@ -273,7 +273,7 @@ class Legiscan2Mongo:
         state : str, optional
             Decode texts in the current collection for the given state only.
 
-        undecoded_only : bool, default False
+        undecoded_only : bool, default True
             Decode texts in the current collection that have not yet been decoded.
 
         verbose : bool, default False
@@ -345,7 +345,7 @@ class Legiscan2Mongo:
                     -------------------------------------------------------
                     For more details, review: (self).decoding_fails
                     """
-        
+        # Remove extra whitespace
         repl_patt = re.compile(r'\ {2,}|\t')
         results = re.sub(pattern=repl_patt, repl='', string=results).strip()
 
