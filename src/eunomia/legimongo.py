@@ -17,6 +17,14 @@ from striprtf.striprtf import rtf_to_text
 
 from eunomia.config import MIN_YEAR, MAX_YEAR, STATES
 
+import logging
+log = logging.getLogger(__name__)
+
+def _log(msg:str, verbose:bool=False) -> None:
+    """ Log msg at debug level and optionally print to stdout. """
+    log.debug(msg, stacklevel=2)
+    if verbose:
+        print(msg)
 
 class Legiscan2Mongo:
     def __init__(self,
@@ -42,21 +50,63 @@ class Legiscan2Mongo:
         # Connect to MongoDB and set target DB & collection
         self.mongo_db = mongo_db
         self.mongo_coll = mongo_coll
-        self.MongoDF = MongoDF(db=mongo_db, coll=mongo_coll, verbose=verbose)
+        self.Mongo = MongoDF(db=mongo_db, coll=mongo_coll, verbose=verbose)
 
-        # Initialize placeholders
-        self.df = None              # Used by load_df()
-        self.data_dir = None     # Used by load_zips()
+        # Potential attributes
+        self.df: pd.DataFrame   # Used by load_df()
+        self.data_dir: Path     # Used by load_zips()
+
+        self.loading_fails = []    # Stores details of bills which could not be loaded
+        self.decoding_fails = []   # Stores details of bills which could not be decoded
+
+        _log(f"Successfully initialized:\n{self}", self.verbose)
 
     # END OF __init__
 
 
     #####################################
-    ##    Legiscan2Mongo Properties    ##
+    ##    Legiscan2Mongo Attributes    ##
     #####################################
 
     def __repr__(self):
         return(f"Legiscan2Mongo(mongo_db={self.mongo_db}, mongo_coll={self.mongo_coll}, verbose={self.verbose})")
+
+    def __str__(self):
+        return( "Legiscan2Mongo\n==============\n"
+               f"mongo_db = {self.mongo_db}\n"
+               f"mongo_coll = {self.mongo_coll}\n"
+               f"verbose = {self.verbose}" 
+              )
+    
+
+    @property
+    def df(self):
+        return(self._df)
+    @df.setter
+    def df(self, new_data):
+        if not isinstance(new_data, pd.DataFrame):
+            msg = f"Invalid object of type {type(new_data)} - must be pandas DataFrame."
+            _log(msg)
+            raise ValueError(msg)
+        
+        _log(f"Updating df with new DataFrame containing columns: {new_data.columns.tolist()}", self.verbose)
+        self._df = new_data.copy()
+
+
+    @property
+    def data_dir(self):
+        return(self._data_dir)
+    @data_dir.setter
+    def data_dir(self, new_dir):
+        try:
+            new_path = Path(new_dir).resolve(strict=True)
+        except OSError:
+            msg = f"Unable to resolve folder location - please confirm path is correct and folder exists:\n{new_dir}"
+            _log(msg)
+            raise ValueError(msg)
+        
+        _log(f"Updating data_dir to folder: {new_path.as_posix()}", self.verbose)
+        self._data_dir = new_path
 
 
     ##################################
@@ -91,15 +141,11 @@ class Legiscan2Mongo:
             subset = [subset]
 
         if isinstance(subset, list):
-            if verbose:
-                print(f"Updating MongoDB using columns: {subset}")
             self.df = df[subset]
         else:
-            if verbose:
-                print(f"Updating MongoDB using all available columns")
             self.df = df
 
-        self.MONGO._update_mongo(self.df)
+        self.Mongo._update_mongo(self.df)
 
         if verbose:
             print(f"MongoDB updates complete.")
@@ -134,19 +180,17 @@ class Legiscan2Mongo:
             bill_type_filter = None
 
         # Resolve input folder
-        self.DATA_FOLDER = Path(file_dir).resolve()
+        self.data_dir = file_dir
 
         if verbose is None:
             verbose = self.verbose
 
-        allzips = [f for f in self.DATA_FOLDER.iterdir() if is_zipfile(f)]
+        allzips = [f for f in self.data_dir.iterdir() if is_zipfile(f)]
 
         # Find bills in each .zip
         bill_json_pattern = re.compile(r".+/.+/bill/\d+.json")
 
-        # Track which bills don't get added to Mongo
-        self.loading_fails = []
-
+        # Keep count of current progress
         files_tot = len(allzips)
         files_cnt = 0
         bills_tot = 0
@@ -220,7 +264,7 @@ class Legiscan2Mongo:
 
                         # Write bill record to MongoDB
                         status = "Writing record to Mongo"
-                        self.MONGO._update_mongo(temp_bill_data)
+                        self.MongoDF._update_mongo(temp_bill_data)
                         
                         # Update counter
                         done_cnt += 1
@@ -259,6 +303,7 @@ class Legiscan2Mongo:
 
 
     def decode_texts(self, 
+                     normalize: bool = True,
                      state: str | None = None,
                      undecoded_only: bool = True,
                      verbose: bool = False) -> str:
@@ -270,6 +315,12 @@ class Legiscan2Mongo:
 
         Parameters
         ----------
+        normalize : bool, default True
+            If True, applies Normalization Form Compatibility Decomposition (NFKD)
+            to decoded texts and converts all characters to lowercase, 
+            to improve text matching/clustering potential;
+            if False, decoded texts are unmodified.
+
         state : str, optional
             Decode texts in the current collection for the given state only.
 
@@ -316,15 +367,16 @@ class Legiscan2Mongo:
 
                 decoded_text = b64d(encoded_text)
                 extracted_text = self.extract_text(decoded_text, mime_id)
-                normalized_text = self.normalize_text(extracted_text)
+                if normalize:
+                    extracted_text = self.normalize_text(extracted_text)
 
                 # Update the record
-                self.COLL.update_one({"_id": id }, {"$set": {"text_body": normalized_text } } )
+                self.COLL.update_one({"_id": id }, {"$set": {"text_body": extracted_text } } )
 
                 done_cnt += 1
 
                 if verbose:
-                    print(f"Decoded text of bill {id}: {normalized_text[:50]}...\n")
+                    print(f"Decoded text of bill {id}: {extracted_text[:50]}...\n")
                 else:
                     print(f"Bills processed: {(records_cnt/float(records_tot))*100:.3f}% done // Decoded: {(done_cnt/float(records_cnt))*100:.3f}% successful", end='                \r')
             except Exception as e:
@@ -431,8 +483,8 @@ class Legiscan2Mongo:
 
 class MongoDF:
     def __init__(self,
-                 db: str,
-                 coll: str,
+                 mongo_db: str,
+                 mongo_coll: str,
                  df: pd.DataFrame | None = None,
                  verbose: bool = False) -> object:
         """
@@ -462,9 +514,7 @@ class MongoDF:
         self._MC = pymongo.MongoClient()
         #self._DB and self._COLL are set implicitly
         
-        # Create self.db, self.coll, self.df
-        # (See the .db, .coll, and .df properties for details on these attributes)
-        self.use_coll(db, coll)
+        self.use_coll(mongo_db, mongo_coll)
         
         self.df_in = isinstance(df, pd.DataFrame)
         # If new data provided
@@ -476,6 +526,8 @@ class MongoDF:
             
     # END OF __init__
 
+    def MongoError(Exception):
+        pass
 
     ##############################
     ##    MongoDF Properties    ##
@@ -484,35 +536,40 @@ class MongoDF:
     def __repr__(self):
         return(f"MongoDF(mongo_db={self.mongo_db}, mongo_coll={self.mongo_coll}, df={'<pd.DataFrame>' if self.df_in else 'None'}, verbose={self.verbose})")
         
+    def __str__(self):
+        return(f"MongoDF\n=======\n"
+               f"mongo_db = {self.mongo_db}, mongo_coll={self.mongo_coll}, df={'<pd.DataFrame>' if self.df_in else 'None'}, verbose={self.verbose})")
 
     @property           # self.db getter & setter
-    def db(self):
+    def mongo_db(self):
         return(self._db)
-    @db.setter
-    def db(self, new_db):
-        self._db = new_db
+    @mongo_db.setter
+    def mongo_db(self, new_db):
+        self._db = str(new_db)
         self._DB = self._MC[self._db]
 
 
     @property           # self.coll getter & setter
-    def coll(self):
+    def mongo_coll(self):
         return(self._coll)
-    @coll.setter
-    def coll(self, new_coll):
-        self._coll = new_coll
+    @mongo_coll.setter
+    def mongo_coll(self, new_coll):
+        self._coll = str(new_coll)
         self._COLL = self._DB[self._coll]
-    # Alias
-    collection = coll
 
 
     @property           # self.df getter & setter
     def df(self):
         return(self._df)
     @df.setter 
-    def df(self, new_df):
-        if not isinstance(new_df, pd.DataFrame):
-            raise ValueError("Invalid value - must be a pandas DataFrame.")
-        self._df = new_df.copy()
+    def df(self, new_data):
+        if not isinstance(new_data, pd.DataFrame):
+            msg = f"Invalid object of type {type(new_data)} - must be pandas DataFrame."
+            _log(msg)
+            raise ValueError(msg)
+        
+        _log(f"Updating df with new DataFrame containing columns: {new_data.columns.tolist()}", self.verbose)
+        self._df = new_data.copy()
     
 
     # Updaters
@@ -524,8 +581,8 @@ class MongoDF:
 
 
     def use_coll(   self,
-                    new_db: str | None = None,
-                    new_coll: str | None = None):
+                    mongo_db: str | None = None,
+                    mongo_coll: str | None = None):
         """
         Use the specified MongoDB collection. Updates local DataFrame (object.df)
         with collection data.
@@ -539,10 +596,10 @@ class MongoDF:
             Name of the Mongo collection where the new data is saved.
 
         """
-        if new_db:
-            self.db = new_db
-        if new_coll:
-            self.coll = new_coll
+        if mongo_db:
+            self.mongo_db = mongo_db
+        if mongo_coll:
+            self.mongo_coll = mongo_coll
         
         self._df_from_coll()
     
@@ -552,26 +609,40 @@ class MongoDF:
     ###########################
 
     def _update_mongo(  self,
-                        data: dict | pd.DataFrame):
+                        data: dict | list[dict] | pd.DataFrame):
         """
         Inserts/updates data in the MongoDB collection.
 
         A dict can only be used to add a single record at a time,
         but a DataFrame can add one or multiple.
         """
+        _log(f"Inserting/updating data in MongoDB collection: {self.mongo_coll}", self.verbose)
+
         def _upsert(record: dict):
             """ Add/update a single record in MongoDB """
-            self.coll.update_one(record, {'$setOnInsert': record}, upsert=True)
+            self._COLL.update_one(record, {'$setOnInsert': record}, upsert=True)
 
-        if isinstance(data, dict):
-            _upsert(data)
-                        
-        elif isinstance(data, pd.DataFrame):
-            for d in data.to_dict(orient='records'):
-                _upsert(d)
-        
-        else:
-            raise ValueError("Invalid data provided - must be a dict or a pandas DataFrame.")
+        try:
+            if isinstance(data, dict):
+                _upsert(data)
+
+            elif isinstance(data, list):
+                for d in list:
+                    if isinstance(d, dict):
+                        _upsert(d)
+                    else:
+                        raise ValueError(f"Invalid data of type {type(data)} in provided list - lists must contain records of type dict.")
+                            
+            elif isinstance(data, pd.DataFrame):
+                for d in data.to_dict(orient='records'):
+                    _upsert(d)
+            
+            else:
+                raise ValueError(f"Invalid data of type {type(data)} provided - must be a pandas DataFrame, dict, or list of dicts.")
+        except Exception as e:
+            msg = f"Error while updating MongoDB collection:\n{e}"
+            _log(msg)
+            raise MongoDF.MongoError(msg)
 
 
     def make_subsample( self,
@@ -611,7 +682,7 @@ class MongoDF:
 
         """
         # Store sample size
-        if isinstance(samp_size, float) and (0.0 <= samp_size) and (samp_size <= 1.0):
+        if isinstance(samp_size, float) and (0.0 <= samp_size <= 1.0):
             self.samp_size = samp_size
         else:
             raise ValueError(f"Invalid parameter: {samp_size=} (must be between 0.0 and 1.0)")
@@ -734,9 +805,9 @@ class MongoDF:
             self.switch_coll(new_coll=new_coll_name)
 
 
-    def cluster_df( self,
-                    text_col: str = 'text_body',
-                    id_col: str | None = 'bill_id',) -> pd.DataFrame:
+    def make_cluster_df(self,
+                        text_col: str = 'text_body',
+                        id_col: str | None = 'bill_id',) -> pd.DataFrame:
         """ 
         Return the current collection with only two features: 
         > text_col: A field containing the document texts to be analyzed and clustered

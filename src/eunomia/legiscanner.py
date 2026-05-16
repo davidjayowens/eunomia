@@ -4,6 +4,15 @@ from requests import get
 import json
 import pandas as pd
 
+import logging
+log = logging.getLogger(__name__)
+
+def _log(msg:str, verbose:bool=False) -> None:
+    """ Log msg at debug level and optionally print to stdout. """
+    log.debug(msg, stacklevel=2)
+    if verbose:
+        print(msg)
+
 
 # List of state abbreviations (includes DC, no Puerto Rico)
 STATES = ['ak', 'al', 'ar', 'az', 'ca', 'co', 'ct', 'dc', 'de', 'fl', 'ga',

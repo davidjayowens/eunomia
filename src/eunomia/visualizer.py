@@ -13,6 +13,15 @@ import difflib
 import re
 from nltk.tokenize import sent_tokenize
 
+import logging
+log = logging.getLogger(__name__)
+
+def _log(msg:str, verbose:bool=False) -> None:
+    """ Log msg at debug level and optionally print to stdout. """
+    log.debug(msg, stacklevel=2)
+    if verbose:
+        print(msg)
+
 
 ##############################
 ##    Visualize Clusters    ##
@@ -133,10 +142,7 @@ class PlotPolars:
 
                     means that features 1 and 2 score relatively higher within this cluster
                     compared to features 3 and 4, but says nothing about the relatiionship
-                    between the scores of individual features between clusters.
-
-                
-                
+                    between the scores of individual features between clusters.  
 
         """
         self.df = df
@@ -147,7 +153,7 @@ class PlotPolars:
                                 cluster_col=cluster_col,
                                 max_feats=max_feats,
                                 scale_scope=scale_scope)
-        # Also sets:
+        # Implicitly sets:
         # self.tfidf_col 
         # self.cluster_col 
         # self.max_feats 
@@ -159,6 +165,14 @@ class PlotPolars:
     def __repr__(self):
         return(f"PlotPolars(df=<pd.DataFrame>, tfidf_col={self.tfidf_col}, cluster_col={self.cluster_col}, max_feats={self.max_feats})")
     
+    def __str__(self) -> str:
+        return(f"PlotPolars\n==========\n"
+               f"df = <pd.DataFrame>\n"
+               f"tfidf_col = {self.tfidf_col}\n"
+               f"cluster_col = {self.cluster_col}\n"
+               f"max_feats = {self.max_feats}"
+               )
+
 
     @property
     def df(self):

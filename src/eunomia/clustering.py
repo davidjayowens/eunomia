@@ -4,16 +4,25 @@ from typing import Literal
 import pandas as pd
 
 from sklearn.cluster import DBSCAN, HDBSCAN, OPTICS
-from scipy.cluster import hierarchy
+#from scipy.cluster import hierarchy
 
 from eunomia.featurizer import make_bow, make_gram_tf, make_df, make_vocab, make_tfidf
+
+import logging
+log = logging.getLogger(__name__)
+
+def _log(msg:str, verbose:bool=False) -> None:
+    """ Log msg at debug level and optionally print to stdout. """
+    log.debug(msg, stacklevel=2)
+    if verbose:
+        print(msg)
 
 
 CLUSTER_METHODS = {
             'dbscan': DBSCAN,
             'hdbscan': HDBSCAN,
             'optics': OPTICS,
-            'hierarchy': hierarchy
+            #'hierarchy': hierarchy
             }
 
 
@@ -40,13 +49,13 @@ class DocCluster:
         verbose : bool, default True
             If True, print messages while processing.
         """
+        self.verbose = verbose
+        
         self.df = df                # Stored as self._df
         self.text_col = text_col
 
         self.cluster_method = cluster_method
         # Implicitly creates: self._method, self._clusterer, and self._preconfig
-
-        self.verbose = verbose
 
     # END OF __init__
 
@@ -54,16 +63,40 @@ class DocCluster:
     def __repr__(self):
         return(f"DocCluster(df=<pd.DataFrame>, text_col={self.text_col}, cluster_method={self.cluster_method}, verbose={self.verbose})")
 
+    def __str__(self):
+        return(f"DocCluster\n==========\n"
+               f"df = <pd.DataFrame>\n"
+               f"text_col = {self.text_col}\n"
+               f"cluster_method = {self.cluster_method}, verbose={self.verbose})")
+    
 
     @property
     def df(self):
         return(self._df)
     @df.setter
-    def df(self, new_df):
-        if not isinstance(new_df, pd.DataFrame):
-            raise ValueError("Invalid value - must be pandas DataFrame.")
-        self._df = new_df.copy()
+    def df(self, new_data):
+        if not isinstance(new_data, pd.DataFrame):
+            msg = f"Invalid object of type {type(new_data)} - must be pandas DataFrame."
+            _log(msg)
+            raise ValueError(msg)
+        
+        _log(f"Updating df with new DataFrame containing columns: {new_data.columns.tolist()}", self.verbose)
+        self._df = new_data.copy()
     
+
+    @property
+    def text_col(self):
+        return(self._text_col)
+    @text_col.setter
+    def text_col(self, col):
+        if not isinstance(col, str) or (col not in self.df.columns):
+            msg = f"Invalid text_col value - must be one of {self.df.columns.tolist()}"
+            _log(msg)
+            raise ValueError(msg)
+        
+        _log(f"Updating text_col to use: {col}", self.verbose)
+        self._text_col = col
+
 
     @property
     def cluster_method(self):
@@ -71,7 +104,13 @@ class DocCluster:
     @cluster_method.setter
     def cluster_method(self, new_method):
         if isinstance(new_method, str):
-            self._method = new_method if new_method in ['dbscan', 'hdbscan', 'optics', 'hierarchy'] else 'dbscan'
+            valid_methods = ['dbscan', 'hdbscan', 'optics', 'hierarchy']
+            if new_method.lower() not in valid_methods:
+                msg = f"Invalid clustering method selected: {new_method.lower()}; must be one of: {valid_methods}"
+                _log(msg, self.verbose)
+                raise ValueError(msg)
+            
+            self._method = new_method.lower()
             self._clusterer = CLUSTER_METHODS[self._method]
             self._preconfig = True
         else:
@@ -91,7 +130,7 @@ class DocCluster:
         self.text_col = new_col
     
     def update_cluster_method(self, new_method):
-        """ """
+        """ Replace the current cluster method. """
         self.cluster_method = new_method
 
 
@@ -693,10 +732,10 @@ class DocCluster:
             print("Cluster processing complete.")
 
 
-    def viz_df( self,
-                base_level: int = 1,
-                base_cluster: int | None = None,
-                sub_level: int | None = None) -> pd.DataFrame:
+    def make_viz_df(self,
+                    base_level: int = 1,
+                    base_cluster: int | None = None,
+                    sub_level: int | None = None) -> pd.DataFrame:
         """ 
         Return the current collection with only two features, used by 
         eunomia.visualizer for making plots: 
