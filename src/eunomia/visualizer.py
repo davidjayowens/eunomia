@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Literal
 import numpy as np
 import pandas as pd
@@ -33,7 +35,8 @@ class PlotPolars:
                     tfidf_col: str, 
                     cluster_col: str, 
                     max_feats: int = 16,
-                    scale_scope: Literal['collection', 'cluster', 'feature', 'vector'] = 'collection'):
+                    scale_scope: Literal['collection', 'cluster', 'feature', 'vector'] = 'collection',
+                    verbose: bool = False):
         """
         Visualizer for document clusters
 
@@ -59,15 +62,20 @@ class PlotPolars:
 
             The scale_scope param defines how this scaling is applied to the results,
             such that 0 and 1 correspond to:
-                > 'collection' - the min/max values across all vectors and all clusters
-                > 'cluster' - the min/max values on a per-cluster basis (all vectors & features)
-                > 'feature' - the min/max values on a per-feature basis (all vectors & clusters)
-                > 'vector' - the min/max values on a per-vector basis (all features)
+                > 'collection' - the absolute min/max values across all vectors and all clusters
+                > 'cluster' - the min/max values on a per-cluster basis (across all vectors & features)
+                > 'feature' - the min/max values on a per-feature basis (across all vectors & clusters)
+                > 'vector' - the min/max values on a per-vector basis (across all features)
 
             NOTE: Scales other than 'collection' can produce more aesthetically interesting
             plots, but some comparative value is necessarily lost. 
             
-            Examples of data scaling:
+        verbose: bool, default False
+            If True, prints updates to stdout during processing.
+
+        
+        Examples of data scaling
+        ------------------------
 
                 Sample data
                 -----------
@@ -79,7 +87,7 @@ class PlotPolars:
                     vector 2: [0.60,        0.15,           0.98]
 
                 'collection' scaling
-                ---------
+                --------------------
                 cluster 1:
                     vector 1: [0.0,         0.01030928,     0.04123711]
                     vector 2: [0.1443299,   0.29896907,     0.7628866]
@@ -89,13 +97,13 @@ class PlotPolars:
                 Pros:
                 > Minimally transformative of the underlying data
                 > Relative values are still proportional to each other, 
-                  across all clusters/features/vectors
+                  across all vectors/features/clusters
                 Cons:
                 > Some flattening of data, less dynamic range on a
-                  per-cluster/feature/vector basis
+                  per-vector/feature/cluster basis
                 
                 'cluster' scaling
-                -----------
+                -----------------
                 cluster 1:
                     vector 1: [0.0,         0.01351351, 0.05405405]
                     vector 2: [0.18918919,  0.39189189, 1.0]
@@ -111,7 +119,7 @@ class PlotPolars:
                 > Reduced ability to compare values across clusters
 
                 'feature' scaling
-                ------------
+                -----------------
                 cluster 1:
                     vector 1: [0.0,         0.03448276,     0.0]
                     vector 2: [0.23728814,  1.0,            0.75268817]
@@ -122,10 +130,10 @@ class PlotPolars:
                 > Within each feature, shows which vectors & clusters have 
                   the highest/lowest values
                 Cons:
-                > Loses comparative value between features for any given cluster/vector
+                > Loses comparative value between features across vectors/clusters
 
                 'vector' scaling
-                -----------
+                ----------------
                 cluster 1:
                     vector 1: [0.0,         0.25,   1.0]
                     vector 2: [0.0,         0.25,   1.0]
@@ -136,17 +144,12 @@ class PlotPolars:
                 > Within each vector, shows which features have the 
                   highest/lowest values
                 Cons:
-                > Loses comparative value between clusters/vectors
-                
-                EG, A cluster where features 1 and 2 are all high, but features 3 and 4 are all low...
-
-                    means that features 1 and 2 score relatively higher within this cluster
-                    compared to features 3 and 4, but says nothing about the relatiionship
-                    between the scores of individual features between clusters.  
+                > Loses comparative value between vectors/clusters
 
         """
+        self.verbose = verbose
+
         self.df = df
-        # Stored internally as self._df - see attribute getter/setter methods below
 
         # DataFrame used in plotting and labeling clusters
         self.update_polar_df(   tfidf_col=tfidf_col,
@@ -161,16 +164,22 @@ class PlotPolars:
         # self.pca_model
         # self.polar_df
         
+    # END OF __init__
+
 
     def __repr__(self):
-        return(f"PlotPolars(df=<pd.DataFrame>, tfidf_col={self.tfidf_col}, cluster_col={self.cluster_col}, max_feats={self.max_feats})")
+        return(f"PlotPolars(df=<pd.DataFrame>, tfidf_col={self.tfidf_col}, "
+               f"cluster_col={self.cluster_col}, max_feats={self.max_feats}), "
+               f"scale_scope={self.scale_scope}, verbose={self.verbose}")
     
     def __str__(self) -> str:
         return(f"PlotPolars\n==========\n"
                f"df = <pd.DataFrame>\n"
                f"tfidf_col = {self.tfidf_col}\n"
                f"cluster_col = {self.cluster_col}\n"
-               f"max_feats = {self.max_feats}"
+               f"max_feats = {self.max_feats}\n"
+               f"scale_scope = {self.scale_scope}\n"
+               f"verbose = {self.verbose}"
                )
 
 
@@ -178,23 +187,63 @@ class PlotPolars:
     def df(self):
         return(self._df)
     @df.setter
-    def df(self, new_df):
-        if not isinstance(new_df, pd.DataFrame):
-            raise ValueError("Invalid value for .df - must be pandas DataFrame.")
+    def df(self, new_data):
+        if not isinstance(new_data, pd.DataFrame):
+            msg = f"Invalid object of type {type(new_data)} - must be pandas DataFrame."
+            _log(msg)
+            raise ValueError(msg)
         
         # Enforce RangeIndex - this will be used to merge with PCA-reduced features in .plot()
-        self._df = new_df.reset_index(drop=True).copy()
+        self._df = new_data.reset_index(drop=True).copy()
 
 
     @property
     def polar_df(self):
         return(self._polar_df)
     @polar_df.setter
-    def polar_df(self, new_df):
-        if not isinstance(new_df, pd.DataFrame):
-            raise ValueError("Invalid value for .polar_df - must be pandas DataFrame.")
-        self._polar_df = new_df.copy()
-    
+    def polar_df(self, new_data):
+        if not isinstance(new_data, pd.DataFrame):
+            msg = f"Invalid object of type {type(new_data)} - must be pandas DataFrame."
+            _log(msg)
+            raise ValueError(msg)
+        
+        self._polar_df = new_data.copy()
+
+
+    def update_polar_df(self,
+                        tfidf_col: str | None = None,
+                        cluster_col: str | None = None,
+                        max_feats: int | None = None,
+                        scale_scope: str | None = None):
+        """ 
+        Update the object's polar_df with new parameters.
+        """
+        df_cols = self.df.columns.tolist()
+
+        if tfidf_col:
+            if tfidf_col not in df_cols:
+                raise ValueError(f"Invalid value for parameter: {tfidf_col = }\nMust be one of {df_cols}")
+            
+            self.tfidf_col = tfidf_col
+
+        if cluster_col:
+            if cluster_col not in df_cols:
+                raise ValueError(f"Invalid value for parameter: {cluster_col = }\nMust be one of {df_cols}")
+            
+            self.cluster_col = cluster_col
+
+        if max_feats:
+            self.max_feats = int(max_feats)
+
+        if scale_scope:
+            valid_scale_scopes = ['collection', 'cluster', 'feature', 'vector']
+            if scale_scope.lower() not in valid_scale_scopes:
+                raise ValueError(f"Invalid value for parameter: {scale_scope=}\nMust be one of {valid_scale_scopes}")
+            
+            self.scale_scope = scale_scope.lower()
+
+        self._make_polar_df()
+        
 
     def _make_polar_df(self):
         """
@@ -257,41 +306,6 @@ class PlotPolars:
 
         self.polar_df = polar_df
 
-
-    def update_polar_df(self,
-                        tfidf_col: str | None = None,
-                        cluster_col: str | None = None,
-                        max_feats: int | None = None,
-                        scale_scope: str | None = None):
-        """ 
-        Update the object's polar_df with new parameters.
-        """
-        df_cols = self.df.columns.tolist()
-
-        if tfidf_col:
-            if tfidf_col not in df_cols:
-                raise ValueError(f"Invalid value for parameter: {tfidf_col = }\nMust be one of {df_cols}")
-            
-            self.tfidf_col = tfidf_col
-
-        if cluster_col:
-            if cluster_col not in df_cols:
-                raise ValueError(f"Invalid value for parameter: {cluster_col = }\nMust be one of {df_cols}")
-            
-            self.cluster_col = cluster_col
-
-        if max_feats:
-            self.max_feats = int(max_feats)
-
-        if scale_scope:
-            valid_scale_scopes = ['collection', 'cluster', 'feature', 'vector']
-            if scale_scope.lower() not in valid_scale_scopes:
-                raise ValueError(f"Invalid value for parameter: {scale_scope=}\nMust be one of {valid_scale_scopes}")
-            
-            self.scale_scope = scale_scope.lower()
-
-        self._make_polar_df()
-        
     
     def plot(   self, 
                 cluster_ids: list[int|str] | None = None, 

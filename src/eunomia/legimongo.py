@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import random
 from pathlib import Path
-import pymongo
 import re
 from zipfile import ZipFile, is_zipfile
+from time import sleep
+
+import pymongo
 import pandas as pd
 
 from base64 import b64decode as b64d
@@ -35,12 +37,10 @@ class Legiscan2Mongo:
         Parameters
         ----------
         mongo_db : str
-            Name of the Mongo database where the collection is 
-            (or will be) saved.
+            Name of the Mongo database where the collection will be saved.
 
         mongo_coll : str
-            Name of the Mongo collection where the data is 
-            (or will be) saved.
+            Name of the Mongo collection where the data will be saved.
             
         verbose : bool, default False
             If True, prints updates to stdout during processing.
@@ -50,7 +50,7 @@ class Legiscan2Mongo:
         # Connect to MongoDB and set target DB & collection
         self.mongo_db = mongo_db
         self.mongo_coll = mongo_coll
-        self.Mongo = MongoDF(db=mongo_db, coll=mongo_coll, verbose=verbose)
+        self.Mongo = MongoDF(db=mongo_db, coll=mongo_coll, local_mem=False, verbose=verbose)
 
         # Potential attributes
         self.df: pd.DataFrame   # Used by load_df()
@@ -139,16 +139,14 @@ class Legiscan2Mongo:
 
         if isinstance(subset, str):
             subset = [subset]
-
         if isinstance(subset, list):
             self.df = df[subset]
         else:
             self.df = df
 
+        _log(f"Updating records from pandas DataFrame into current collection: {self.mongo_db}.{self.mongo_coll}", verbose)
         self.Mongo._update_mongo(self.df)
-
-        if verbose:
-            print(f"MongoDB updates complete.")
+        _log("MongoDB updates complete.", verbose)
 
 
     def load_zips(self, 
@@ -171,6 +169,9 @@ class Legiscan2Mongo:
         verbose : bool, defaults to the value provided to init()
             If True, prints updates during processing.
         """
+        if verbose is None:
+            verbose = self.verbose
+        
         if isinstance(bill_types, (int,str)):
             bill_types = [bill_types]
         
@@ -181,9 +182,6 @@ class Legiscan2Mongo:
 
         # Resolve input folder
         self.data_dir = file_dir
-
-        if verbose is None:
-            verbose = self.verbose
 
         allzips = [f for f in self.data_dir.iterdir() if is_zipfile(f)]
 
@@ -197,14 +195,12 @@ class Legiscan2Mongo:
         bills_cnt = 0
         done_cnt = 0
 
-        if verbose:
-            print(f"{files_tot} files identified in {self.DATA_FOLDER.as_posix()}")
-
+        _log(f"{files_tot} files identified in {self.data_dir.as_posix()}", verbose)
+        _log(f"Updating records from zip files into current collection: {self.mongo_db}.{self.mongo_coll}", verbose)
         for zip in allzips:
             files_cnt += 1
 
-            if verbose:
-                print(f"Inspecting zipfile: {zip}\n# {files_cnt} out of {files_tot}")
+            _log(f"Inspecting zipfile: {zip}\n# {files_cnt} out of {files_tot}", verbose)
 
             with ZipFile(zip) as zf:
                 manifest = [z for z in zf.namelist() if bill_json_pattern.match(z)]
@@ -217,16 +213,19 @@ class Legiscan2Mongo:
                     bills_cnt += 1
                     these_bills_cnt += 1
 
-                    if verbose:
-                        print(f"Processing bill: {bill}\nZipfile {files_cnt} out of {files_tot} // Bill {these_bills_cnt} out of {these_bills_tot}\nCumulative: {done_cnt} successful out of {bills_cnt-1} attempted (this is {bills_cnt})")
+                    _log(f"Processing bill: {bill}\n"
+                         f"Zipfile {files_cnt} out of {files_tot} // "
+                         f"Bill {these_bills_cnt} out of {these_bills_tot}\n"
+                         f"Cumulative: {done_cnt} successful out of {bills_cnt-1} attempted (this is {bills_cnt})", verbose)
 
                     try:
+                        # The status variable is included in the error message 
+                        # if an exception is raised during processing
                         status = 'Loading bill to json_string'
                         json_string = json.loads(zf.read(bill))['bill']
 
                         if (bill_type_filter is not None) and (json_string["bill_type_id"] not in bill_type_filter):
-                            if verbose:
-                                print(f"Skipping invalid bill_type_id: {json_string['bill_type_id']}")
+                            _log(f"Skipping invalid bill_type_id: {json_string['bill_type_id']}", verbose)
                             continue    # Skip processing
 
                         # load corresponding (encoded) text of initial version of the bill
@@ -264,29 +263,27 @@ class Legiscan2Mongo:
 
                         # Write bill record to MongoDB
                         status = "Writing record to Mongo"
-                        self.MongoDF._update_mongo(temp_bill_data)
+                        self.Mongo._update_mongo(temp_bill_data)
                         
                         # Update counter
                         done_cnt += 1
 
                         if verbose:
-                            print(f"Result: SUCCESS\n")
+                            _log(f"Result: SUCCESS", verbose)
                         else:
-                            print(f"Zipfiles: {(files_cnt/float(files_tot))*100:.3f}% done // Bills in zip: {(these_bills_cnt/float(these_bills_tot))*100:.3f}% done", end='                \r')
+                            # Continuously updates status message on same line
+                            print(f"Zipfiles: {(files_cnt/float(files_tot))*100:.3f}% done // "
+                                  f"Bills in zip: {(these_bills_cnt/float(these_bills_tot))*100:.3f}% done", 
+                                  end='                \r')
 
                     except Exception as e:
                         self.loading_fails.append((zip, bill, status, e))
                         
-                        if verbose:
-                            print(f"Result: FAILURE // Stopped at: {status} // Error: {e}\n")
-        print()
-
-        # Refresh .df based on updated collection
-        self._df_from_coll()
+                        _log(f"Result: FAILURE // Stopped at: {status} // Error: {e}", verbose)
 
         results =   f"""
                     RESULTS:
-                    {files_tot} zip files found in target directory: {self.DATA_FOLDER}
+                    {files_tot} zip files found in target directory: {self.data_dir.as_posix()}
                     {bills_cnt} bills were processed out of {bills_tot} identified
                     {done_cnt} records were successfully inserted into Mongo ({(done_cnt/float(bills_tot))*100:.3f}% success rate)
                     -------------------------------------------------------
@@ -299,14 +296,14 @@ class Legiscan2Mongo:
         repl_patt = re.compile(r'\ {2,}|\t')
         results = re.sub(pattern=repl_patt, repl='', string=results).strip()
 
-        return(results) 
+        _log(results, verbose)
 
 
     def decode_texts(self, 
                      normalize: bool = True,
                      state: str | None = None,
                      undecoded_only: bool = True,
-                     verbose: bool = False) -> str:
+                     verbose: bool | None = None) -> str:
         """
         Decode the base64-encoded bill texts in the collection.
 
@@ -330,40 +327,38 @@ class Legiscan2Mongo:
         verbose : bool, default False
             If True, prints updates to stdout during processing.
         """
+        if verbose is None:
+            verbose = self.verbose
+
         # Initiate Tika, for processing PDFs
         tika.initVM()
-
-        # Track which bills don't get decoded successfully
-        self.decoding_fails = []
+        sleep(5)    # Give Tika time to warm up
 
         # Gather all bills in the current collection
-        # TODO: Use local .df instead of re-collecting from MongoDB
-        if undecoded_only and (state is not None):
-            records = list(self.COLL.find({'state':state.upper(), 'text_body':None}))
-        elif undecoded_only:
-            records = list(self.COLL.find({'text_body':None}))
-        elif state is not None:
-            records = list(self.COLL.find({'state':state.upper()}))
-        else:
-            records = list(self.COLL.find({}))
+        search = {}
+        if undecoded_only:
+            search['text_body'] = None
+        if state:
+            search['state'] = state.upper()
+        
+        records_df = self.Mongo.get_records(search, inplace=False)[['_id', 'doc_mime_id', 'text_body_encoded']]
 
-        records_tot = len(records)
+        records_tot = records_df.shape[0]
         records_cnt = 0
         done_cnt = 0
 
-        if verbose:
-            print(f"{records_tot} records identified in current collection")
+        _log(f"{records_tot} records identified in current collection", verbose)
 
-        for record in records:
+        for _,record in records_df.iterrows():
             records_cnt += 1
 
             try:
                 id = record['_id']
                 mime_id = record['doc_mime_id']
                 encoded_text = record['text_body_encoded']
-                if verbose:
-                    print(f"Processing text of bill: {id}\nBill {records_cnt} out of {records_tot}\nCumulative: {done_cnt} successful out of {records_cnt-1} attempted (this is {records_cnt})")
-                    print(f"Encoded text of bill {id}: {encoded_text[:50]}...")
+                
+                _log(f"Processing text of bill: {id}\nBill {records_cnt} out of {records_tot}\nCumulative: {done_cnt} successful out of {records_cnt-1} attempted (this is {records_cnt})", verbose)
+                _log(f"Encoded text of bill {id}: {encoded_text[:50]}...", verbose)
 
                 decoded_text = b64d(encoded_text)
                 extracted_text = self.extract_text(decoded_text, mime_id)
@@ -371,22 +366,23 @@ class Legiscan2Mongo:
                     extracted_text = self.normalize_text(extracted_text)
 
                 # Update the record
-                self.COLL.update_one({"_id": id }, {"$set": {"text_body": extracted_text } } )
+                # TODO: Test using MongoDF._update_mongo() here
+                self.Mongo._COLL.update_one({"_id": id}, {"$set": {"text_body": extracted_text}})
 
                 done_cnt += 1
 
                 if verbose:
-                    print(f"Decoded text of bill {id}: {extracted_text[:50]}...\n")
+                    _log(f"Decoded text of bill {id}: {extracted_text[:50]}...\n", verbose)
                 else:
-                    print(f"Bills processed: {(records_cnt/float(records_tot))*100:.3f}% done // Decoded: {(done_cnt/float(records_cnt))*100:.3f}% successful", end='                \r')
+                    # Continuously updates on same line
+                    print(f"Bills processed: {(records_cnt/float(records_tot))*100:.3f}% done // "
+                          f"Decoded: {(done_cnt/float(records_cnt))*100:.3f}% successful", 
+                          end='                \r')
             except Exception as e:
                 self.decoding_fails.append((id, mime_id, e))
+                _log(f"Unable to decode bill {id}: {e}", verbose)
 
-                if verbose:
-                    print(f"Unable to decode bill {id}: {e}\n")
-        
-        print()
-
+        # All texts processed
         results =   f"""
                     RESULTS:
                     {records_cnt} bills were processed out of {records_tot} in current collection
@@ -401,7 +397,7 @@ class Legiscan2Mongo:
         repl_patt = re.compile(r'\ {2,}|\t')
         results = re.sub(pattern=repl_patt, repl='', string=results).strip()
 
-        return(results) 
+        _log(results, verbose)
 
    
     @staticmethod
@@ -485,6 +481,7 @@ class MongoDF:
     def __init__(self,
                  mongo_db: str,
                  mongo_coll: str,
+                 local_mem: bool = False,
                  df: pd.DataFrame | None = None,
                  verbose: bool = False) -> object:
         """
@@ -492,14 +489,18 @@ class MongoDF:
 
         Parameters
         ----------
-        db : str
+        mongo_db : str
             Name of the Mongo database where the collection is saved.
 
-        coll : str
+        mongo_coll : str
             Name of the Mongo collection where the data is saved.
 
+        local_mem : bool, default False
+            Copy collection into local memory, stored as a pandas DataFrame;
+            can be slow to initialize, but makes searches faster.
+
         df : pandas DataFrame, optional
-            Provide data to add to the MongoDB collection. If the collection
+            Data to add to the MongoDB collection. If the collection
             already contains data, records provided to df parameter will be
             inserted/updated in the collection.
 
@@ -507,12 +508,13 @@ class MongoDF:
             If True, prints updates to stdout during processing.
         """
         self.verbose = verbose
+        self.local_mem = local_mem
         
         # Connect to MongoDB collection and create a local DataFrame from it
         # NOTE: These should not be accessed by the user directly and their
         #       setter methods are encapsulated by the .db and .coll properties.
         self._MC = pymongo.MongoClient()
-        #self._DB and self._COLL are set implicitly
+        #self._DB and self._COLL are set implicitly by use_coll()
         
         self.use_coll(mongo_db, mongo_coll)
         
@@ -521,8 +523,6 @@ class MongoDF:
         if self.df_in:
             # Insert/update new data
             self._update_mongo(df)
-            # Refresh .df based on updated collection
-            self._df_from_coll()
             
     # END OF __init__
 
@@ -534,13 +534,19 @@ class MongoDF:
     ##############################
 
     def __repr__(self):
-        return(f"MongoDF(mongo_db={self.mongo_db}, mongo_coll={self.mongo_coll}, df={'<pd.DataFrame>' if self.df_in else 'None'}, verbose={self.verbose})")
+        return(f"MongoDF(mongo_db={self.mongo_db}, mongo_coll={self.mongo_coll}, local_mem={self.local_mem}, "
+               f"df={'<pd.DataFrame>' if self.df_in else 'None'}, verbose={self.verbose})")
         
     def __str__(self):
         return(f"MongoDF\n=======\n"
-               f"mongo_db = {self.mongo_db}, mongo_coll={self.mongo_coll}, df={'<pd.DataFrame>' if self.df_in else 'None'}, verbose={self.verbose})")
+               f"mongo_db = {self.mongo_db}\n"
+               f"mongo_coll = {self.mongo_coll}\n"
+               f"local_mem = {self.local_mem}\n"
+               f"df = {'<pd.DataFrame>' if self.df_in else 'None'}\n"
+               f"verbose = {self.verbose})")
 
-    @property           # self.db getter & setter
+
+    @property           # self.mongo_db getter & setter
     def mongo_db(self):
         return(self._db)
     @mongo_db.setter
@@ -549,7 +555,7 @@ class MongoDF:
         self._DB = self._MC[self._db]
 
 
-    @property           # self.coll getter & setter
+    @property           # self.mongo_coll getter & setter
     def mongo_coll(self):
         return(self._coll)
     @mongo_coll.setter
@@ -574,12 +580,6 @@ class MongoDF:
 
     # Updaters
 
-    def _df_from_coll(self):
-        """ Gather MongoDB collection into pandas DF """
-        data = list(self._COLL.find())
-        self.df = pd.DataFrame(data)
-
-
     def use_coll(   self,
                     mongo_db: str | None = None,
                     mongo_coll: str | None = None):
@@ -601,7 +601,8 @@ class MongoDF:
         if mongo_coll:
             self.mongo_coll = mongo_coll
         
-        self._df_from_coll()
+        if self.local_mem:
+            self.get_records(inplace=True)
     
 
     ###########################
@@ -639,28 +640,157 @@ class MongoDF:
             
             else:
                 raise ValueError(f"Invalid data of type {type(data)} provided - must be a pandas DataFrame, dict, or list of dicts.")
+            
+            # Optionally, sync updated collection back into self.df
+            if self.local_mem:
+                self.get_records(inplace=True)
+
         except Exception as e:
             msg = f"Error while updating MongoDB collection:\n{e}"
             _log(msg)
             raise MongoDF.MongoError(msg)
 
 
+    def get_records(self,
+                    search: dict | list[dict] | None = None,
+                    pandas: bool = True,
+                    inplace: bool | None = None,
+                    mongo_db: str | None = None,
+                    mongo_coll: str | None = None) -> pd.DataFrame:
+        """
+        Returns bills matching either a single search query (dict) or
+        an aggregated search pipeline (list of dicts).
+
+        Parameters
+        ----------
+        search : dict or list[dict], optional
+            If a dict is provided, uses MongoDB's find() method; if a list of
+            dicts is provided, uses MongoDB's aggregate() method. If no search 
+            terms are provided (default), returns all available
+            documents in current collection.
+
+        pandas : bool, default True
+            If True, convert results to a pandas DataFrame;
+            if False, return results in raw form.
+            NOTE: If inplace=True, this value will always be treated as True.
+            
+        inplace : bool, optional
+            If True, updates the object's .df property with the results;
+            if False, returns results directly. By default, uses the same
+            value as the local_mem parameter provided during init.
+
+        mongo_db : str, optional
+            If provided, overrides the currently selected MongoDB database.
+
+        mongo_coll : str, optional
+            If provided, overrides the currently selected MongoDB collection.
+            
+        """
+        if search is None:
+            search = {}
+        if inplace is None:
+            inplace = self.local_mem
+
+        if mongo_db:
+            this_db = self._MC[mongo_db]
+        else:
+            this_db = self._DB
+
+        if mongo_coll:
+            this_coll = this_db[mongo_coll]
+        else:
+            this_coll = this_db[self.mongo_coll]
+
+        try:
+            if isinstance(search, dict):
+                results = this_coll.find(search)
+            elif isinstance(search, list):
+                results = this_coll.aggregate(search)
+            else:
+                raise ValueError(f"Invalid search of type {type(search)} - must be either dict (find) or list of dicts (aggregate)")
+
+            if pandas or inplace:
+                results = pd.DataFrame(list(results))
+            if inplace:
+                self.df = results
+            else:
+                return(results)
+            
+        except Exception as e:
+            msg = f"Unable to execute search query.\n{e}"
+            _log(msg)
+            raise MongoDF.MongoError(msg)
+
+        
+    def count_records(self,
+                      search: dict | None = None,
+                      mongo_db: str | None = None,
+                      mongo_coll: str | None = None) -> int:
+        """
+        Returns count of bills matching the search query.
+
+        Parameters
+        ----------
+        search : dict, optional
+            Dictionary of search parameters; if no search terms are provided,
+            counts all documents in current collection.
+
+        mongo_db : str, optional
+            If provided, overrides the currently selected MongoDB database.
+
+        mongo_coll : str, optional
+            If provided, overrides the currently selected MongoDB collection.
+
+        """
+        if search is None:
+            search = {}
+
+        if mongo_db:
+            this_db = self._MC[mongo_db]
+        else:
+            this_db = self._DB
+
+        if mongo_coll:
+            this_coll = this_db[mongo_coll]
+        else:
+            this_coll = this_db[self.mongo_coll]
+            
+        try:
+            if not isinstance(search, dict):
+                raise ValueError(f"Invalid search of type {type(search)} - must be a dict.")
+                
+            count = self._COLL.count_documents(search)
+            return(count)
+            
+        except Exception as e:
+            msg = f"Unable to execute search query.\n{e}"
+            _log(msg)
+            raise MongoDF.MongoError(msg)
+
+
     def make_subsample( self,
-                        new_coll_name: str,
+                        new_coll: str,
+                        new_db: str | None = None,
                         samp_size: float = 0.01,
                         states: str | list[str] | None = None,
                         years: int | str | list[int|str] | None = None,
                         bill_types: int | str | list[int|str] | None = None,
-                        update_self: bool = False):
+                        append: bool = True,
+                        update_self: bool = False,
+                        verbose: bool | None = None):
         """
-        Make a new sample in MongoDB using the current collection. Results
-        are stratified by state, based on number of bills available in the 
-        current collection.
+        Make a new sample in MongoDB as a subsample of the current collection. 
+        Results are stratified by state, based on number of bills available in the 
+        targeted scope.
         
         Parameters
         ----------
-        new_coll_name : str
+        new_coll : str
             Name for the new MongoDB collection to store the sample.
+
+        new_db : str, optional
+            If provided, the MongoDB database where sample will be stored;
+            by default, uses currently selected database.
 
         samp_size : float, default 0.01
             Sample size - the portion of available bills to use,
@@ -675,85 +805,88 @@ class MongoDF:
         bill_types : int or list of them, optional
             One or more valid bill_type values (1 to 23) to include the sample.
 
+        append : bool, default True
+            If new_coll already exists in the current database and 
+            append=True, records will be inserted/updated in the existing collection;
+            if False, the existing collection will be dropped and replaced.
+            
         update_self: bool, default False
-            If True, switches to the new collection and replaces the current
-            .df data with the new sample; if False, keep the original 
-            collection/data.
+            If True, immediately switch to the new collection and replace 
+            existing data in local memory (if local_mem=True) with the new sample; 
+            if False, the new collection is created without modifying the
+            current parameters or data.
+
+        verbose : bool, defaults to the value provided to init()
+            If True, prints updates during processing.
 
         """
-        # Store sample size
-        if isinstance(samp_size, float) and (0.0 <= samp_size <= 1.0):
-            self.samp_size = samp_size
-        else:
-            raise ValueError(f"Invalid parameter: {samp_size=} (must be between 0.0 and 1.0)")
-        
-        if self.verbose:
-            print(f"Sample size: {self.samp_size}")
+        if verbose is None:
+            verbose = self.verbose
 
+        # Validate samp_size
+        if not (isinstance(samp_size, float) and (0.0 <= samp_size <= 1.0)):
+            msg = f"Invalid parameter: {samp_size=} (must be between 0.0 and 1.0)"
+            raise ValueError()
+        
         # Build list of states to filter on
         if isinstance(states, str):
             states = [states]
-        
-        if isinstance(states, list) and (len(states) > 0):
-            self.states = [state.strip().upper()[:2] for state in states if state.strip().lower()[:2] in STATES]
-            
-            if len(self.states) == 0:
-                self.states = None
+        if isinstance(states, list):
+            states = [state.strip().upper()[:2] for state in states 
+                        if state.strip().lower()[:2] in STATES]
+            if len(states) == 0:
+                states = None
         else:
-            self.states = None
-
-        if self.verbose:
-            print(f"States list: {self.states}")
+            states = None
 
         # Build list of years to filter on (all int)
         if isinstance(years, (int, str, float)):
-            years = [int(years)]
-
+            years = [years]
         if isinstance(years, list) and (len(years) > 0):
-            self.years = [int(year) for year in years if MIN_YEAR <= int(year) <= MAX_YEAR]
-
-            if len(self.years) == 0:
-                self.years = None
+            years = [int(year) for year in years 
+                        if (MIN_YEAR <= int(year) <= MAX_YEAR)]
+            if len(years) == 0:
+                years = None
         else:
-            self.years = None
+            years = None
 
-        if self.verbose:
-            print(f"Years list: {self.years}")
-
-        # Building list of bill types
+        # Building list of bill types (all str)
         if isinstance(bill_types, (int, str)):
-            bill_types = [str(bill_types)]
-
-        if isinstance(bill_types, list) and (len(bill_types) > 0):
-            self.bill_types = [str(bill_type) for bill_type in bill_types if 1 <= int(bill_type) <= 23]
-
-            if len(self.bill_types) == 0:
-                self.bill_types = None
+            bill_types = [bill_types]
+        if isinstance(bill_types, list):
+            bill_types = [str(bill_type) for bill_type in bill_types 
+                            if (1 <= int(bill_type) <= 23)]
+            if len(bill_types) == 0:
+                bill_types = None
         else:
-            self.bill_types = None
+            bill_types = None
 
-        if self.verbose:
-            print(f"Bill types list: {self.bill_types}")
+        # Log all params for new sample after validation
+        _log(f"CREATING NEW SAMPLE\n===================\n"
+             f"DB: {new_db if new_db else self.mongo_db}\n"
+             f"Collection: {new_coll}\n"
+             f"Sample size: {samp_size}\n"
+             f"States: {states if states else 'ALL'}\n"
+             f"Years: {years if years else 'ALL'}\n"
+             f"Bill types: {bill_types if bill_types else 'ALL'}\n"
+             f"Append: {append}",
+             verbose)
 
-        if self.verbose:
-            print("Creating new sample...")
-
-        # Find all bills that match the scope
-        pline_dict_01 = {'$match': {}}
-        if self.states:
-            pline_dict_01['$match']['state'] = {'$in': self.states}
-        if self.years:
-            pline_dict_01['$match']['session_yr_start'] = {'$in': self.years}
-        if self.bill_types:
-            pline_dict_01['$match']['bill_type_id'] = {'$in': self.bill_types}
+        # Find bills that match the scope in current collection
+        query = {}
+        if states:
+            query['state'] = {'$in': states}
+        if years:
+            query['session_yr_start'] = {'$in': years}
+        if bill_types:
+            query['bill_type_id'] = {'$in': bill_types}
    
-        pline = [pline_dict_01]
-        sample = list(self._COLL.aggregate(pline))
-        num_bills = len(sample)
+        pline_dict_01 = {'$match': query}
+        num_bills = self.count_records(query)
 
-        if self.verbose:
-            print(f"Total number of bills in target scope: {num_bills}")
-            print(f"Estimated number of bills in sample: {int(num_bills * self.samp_size)}")
+        _log(f"Total number of bills in target scope: {num_bills}\n"
+             f"Estimated number of bills in sample: {int(num_bills * samp_size)}",
+             verbose)
 
         # Get in-scope bills by state
         pline_dict_02 = {"$group": {"_id": "$state", "bill_ids": {"$addToSet": "$bill_id"}}}
@@ -761,48 +894,53 @@ class MongoDF:
             pline_dict_01,  # 01: Filter to sample scope, then
             pline_dict_02   # 02: Get available bills by state
         ]
-        bills_by_state = {i['_id']:i['bill_ids'] for i in self._COLL.aggregate(pline)}
+        bills_by_state = {st['_id']:st['bill_ids'] for st in self.get_records(pline, pandas=False, inplace=False)}
   
-        bill_counts_by_state = {k:len(v) for k,v in bills_by_state.items()}
+        alpha_states = sorted(list(bills_by_state.keys()))
+        bill_counts_by_state = {st:len(bills_by_state[st]) for st in alpha_states}
         samp_counts_by_state = {k:int((v * self.samp_size)+1) for k,v in bill_counts_by_state.items()}
         
-        if self.verbose:
-            print(f"Sample sizes by state:\n{samp_counts_by_state}")
+        _log(f"Sample sizes by state:\n{samp_counts_by_state}", verbose)
 
         # Pull a random sample of bill IDs from each state
         rand_samp = {}
         rand_samp_flat = []
-        for st in bills_by_state:
+        for st in alpha_states:
             rand_samp[st] = random.sample(bills_by_state[st], samp_counts_by_state[st])
             rand_samp_flat.extend(rand_samp[st])
 
-        # Grab the records for all bills in the new sample from the master collection
-        if self.verbose:
-            print("Gathering sampled bills from primary Mongo collection...")
+        # Potentially drop existing collection
+        doc_count = self.count_records(mongo_db=new_db, mongo_coll=new_coll)
+        if not append and (doc_count > 0):
+            tar_db = new_db if new_db else self.mongo_db
+            _log("Dropping existing collection\n============================\n"
+                f"DB: {tar_db}\n"
+                f"Collection: {new_coll}\n"
+                f"Existing record count: {doc_count}")
+            try:
+                self._MC[tar_db][new_coll].drop()
+                _log("Operation successful.", verbose)
+            except Exception as e:
+                msg = f"Unable to drop collection.\n{e}"
+                _log(msg)
+                raise MongoDF.MongoError(msg)
 
+        # Copy records directly into new location
         pline_dict_03 = {"$match": {"bill_id": {"$in": rand_samp_flat}}}
+        if new_db:
+            pline_dict_04 = {"$out": {"db": new_db, "coll": new_coll}}
+        else:
+            pline_dict_04 = {"$out": new_coll}
+
         pline = [
-            pline_dict_03
+            pline_dict_03,  # Matches bills in the sample in current collection
+            pline_dict_04   # Copies bills to the new collection directly
         ]
-        sample = list(self._COLL.aggregate(pline))
+        self._COLL.aggregate(pline)
 
-        samp_coll = self.DB[new_coll_name]
-        doc_count = samp_coll.count_documents({})
-
-        if doc_count > 0:
-            print(f"Dropping existing collection: {new_coll_name}")
-            samp_coll.drop()
-
-        result = samp_coll.insert_many(sample, ordered=False)
-
-        fails = [record['bill_id'] for record in sample if record['bill_id'] not in result.inserted_ids]
-        if self.verbose:
-            print(f"Successfully inserted: {len(sample) - len(fails)}")
-            print(f"Failed to insert: {len(fails)}")
-
-        # Update object data
+        # Update object data; if self.local_mem, this will also refresh self.df with new sample
         if update_self:
-            self.switch_coll(new_coll=new_coll_name)
+            self.use_coll(mongo_db=new_db, mongo_coll=new_coll)
 
 
     def make_cluster_df(self,
@@ -811,15 +949,18 @@ class MongoDF:
         """ 
         Return the current collection with only two features: 
         > text_col: A field containing the document texts to be analyzed and clustered
-        > id_col: [Optional] A key/id field (should be unique and non-null for all records)
+        > id_col: [Optional] The key/id field (should be unique and non-null for all records)
         """
-        if self.verbose:
-            print(f"DataFrame with columns: " + (f"{id_col}, {text_col}" if id_col else text_col))
+        _log(f"Creating DataFrame for clustering with columns: {f"{id_col}, {text_col}" if id_col else text_col}", self.verbose)
         
         if id_col:
-            return(self.df[[id_col, text_col]])
+            cols = [id_col, text_col]
         else:
-            return(self.df[[text_col]])
+            cols = [text_col]
 
+        if self.local_mem:
+            return(self.df[cols])
+        else:
+            return(self.get_records(pandas=True, inplace=False)[cols])
 
 
