@@ -4,7 +4,7 @@ from typing import Literal
 import pandas as pd
 
 from sklearn.cluster import DBSCAN, HDBSCAN, OPTICS
-#from scipy.cluster import hierarchy
+from scipy.cluster import hierarchy
 
 from eunomia.featurizer import make_bow, make_gram_tf, make_df, make_vocab, make_tfidf
 
@@ -17,12 +17,17 @@ def _log(msg:str, verbose:bool=False) -> None:
     if verbose:
         print(msg)
 
+class ClusterError(Exception):
+    def __init__(self, msg):
+        log.error("Eunomia | ClusterError exception encountered:\n" + msg, stacklevel=2)
+        super().__init__(msg)
+
 
 CLUSTER_METHODS = {
             'dbscan': DBSCAN,
             'hdbscan': HDBSCAN,
             'optics': OPTICS,
-            #'hierarchy': hierarchy
+            'hierarchy': hierarchy
             }
 
 
@@ -76,9 +81,7 @@ class DocCluster:
     @df.setter
     def df(self, new_data):
         if not isinstance(new_data, pd.DataFrame):
-            msg = f"Invalid object of type {type(new_data)} - must be pandas DataFrame."
-            _log(msg)
-            raise ValueError(msg)
+            raise ClusterError(f"Invalid object of type {type(new_data)}\nMust be pandas DataFrame.")
         
         _log(f"Updating df with new DataFrame containing columns: {new_data.columns.tolist()}", self.verbose)
         self._df = new_data.copy()
@@ -90,9 +93,7 @@ class DocCluster:
     @text_col.setter
     def text_col(self, col):
         if not isinstance(col, str) or (col not in self.df.columns):
-            msg = f"Invalid text_col value - must be one of {self.df.columns.tolist()}"
-            _log(msg)
-            raise ValueError(msg)
+            raise ClusterError(f"Invalid parameter {col=}\nMust be one of {self.df.columns.tolist()}")
         
         _log(f"Updating text_col to use: {col}", self.verbose)
         self._text_col = col
@@ -106,9 +107,7 @@ class DocCluster:
         if isinstance(new_method, str):
             valid_methods = ['dbscan', 'hdbscan', 'optics', 'hierarchy']
             if new_method.lower() not in valid_methods:
-                msg = f"Invalid clustering method selected: {new_method.lower()}; must be one of: {valid_methods}"
-                _log(msg, self.verbose)
-                raise ValueError(msg)
+                raise ValueError(f"Invalid clustering method selected: {new_method.lower()}\nMust be one of: {valid_methods}")
             
             self._method = new_method.lower()
             self._clusterer = CLUSTER_METHODS[self._method]
@@ -668,9 +667,9 @@ class DocCluster:
 
         """
         if not (isinstance(level, int) and (level > 1)):
-            raise ValueError(f"Invalid parameter {level=} - must be int greater than 1")
+            raise ClusterError(f"Invalid parameter {level=}\nMust be int greater than 1")
         if not (isinstance(use_level, int) and (use_level < level)):
-            raise ValueError(f"Invalid parameter {use_level=} - must be int, less than {level=}")
+            raise ClusterError(f"Invalid parameter {use_level=}\nMust be int, less than {level=}")
         
         # Labels for new features
         tfidf_col = f'lvl{level}_tfidf'
@@ -699,7 +698,7 @@ class DocCluster:
             elif sort_by == 'weighted':
                 pass # TODO(?)
             else:
-                raise ValueError(f"Invalid parameter {top_n_by=} - must be one of 'size', 'score', 'weighted'")
+                raise ClusterError(f"Invalid parameter {top_n_by=}\nMust be one of 'size', 'score', 'weighted'")
         else:
             prior_clusters = self.df[use_cluster_id_col].unique().tolist()
 

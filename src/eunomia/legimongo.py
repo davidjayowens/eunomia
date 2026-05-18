@@ -28,6 +28,12 @@ def _log(msg:str, verbose:bool=False) -> None:
     if verbose:
         print(msg)
 
+class LegimongoError(Exception):
+    def __init__(self, msg):
+        log.error("Eunomia | LegimongoError exception encountered:\n" + msg, stacklevel=2)
+        super().__init__(msg)
+
+
 class Legiscan2Mongo:
     def __init__(self,
                  mongo_db: str,
@@ -65,7 +71,8 @@ class Legiscan2Mongo:
 
 
     #####################################
-    ##    Legiscan2Mongo Attributes    ##
+    ##    Legiscan2Mongo Attributes:   ## 
+    ##        Getters & Setters        ##
     #####################################
 
     def __repr__(self):
@@ -85,9 +92,7 @@ class Legiscan2Mongo:
     @df.setter
     def df(self, new_data):
         if not isinstance(new_data, pd.DataFrame):
-            msg = f"Invalid object of type {type(new_data)} - must be pandas DataFrame."
-            _log(msg)
-            raise ValueError(msg)
+            raise LegimongoError(f"Invalid object of type: {type(new_data)}\nMust be pandas DataFrame.")
         
         _log(f"Updating df with new DataFrame containing columns: {new_data.columns.tolist()}", self.verbose)
         self._df = new_data.copy()
@@ -101,9 +106,7 @@ class Legiscan2Mongo:
         try:
             new_path = Path(new_dir).resolve(strict=True)
         except OSError:
-            msg = f"Unable to resolve folder location - please confirm path is correct and folder exists:\n{new_dir}"
-            _log(msg)
-            raise ValueError(msg)
+            raise LegimongoError(f"Unable to resolve folder location.\nPlease confirm path is correct and folder exists:\n{new_dir}")
         
         _log(f"Updating data_dir to folder: {new_path.as_posix()}", self.verbose)
         self._data_dir = new_path
@@ -526,8 +529,6 @@ class MongoDF:
             
     # END OF __init__
 
-    def MongoError(Exception):
-        pass
 
     ##############################
     ##    MongoDF Properties    ##
@@ -570,9 +571,7 @@ class MongoDF:
     @df.setter 
     def df(self, new_data):
         if not isinstance(new_data, pd.DataFrame):
-            msg = f"Invalid object of type {type(new_data)} - must be pandas DataFrame."
-            _log(msg)
-            raise ValueError(msg)
+            raise LegimongoError(f"Invalid object of type: {type(new_data)}\nMust be pandas DataFrame.")
         
         _log(f"Updating df with new DataFrame containing columns: {new_data.columns.tolist()}", self.verbose)
         self._df = new_data.copy()
@@ -632,23 +631,21 @@ class MongoDF:
                     if isinstance(d, dict):
                         _upsert(d)
                     else:
-                        raise ValueError(f"Invalid data of type {type(data)} in provided list - lists must contain records of type dict.")
+                        raise LegimongoError(f"Invalid data of type: {type(data)}\nLists must only contain records of type dict.")
                             
             elif isinstance(data, pd.DataFrame):
                 for d in data.to_dict(orient='records'):
                     _upsert(d)
             
             else:
-                raise ValueError(f"Invalid data of type {type(data)} provided - must be a pandas DataFrame, dict, or list of dicts.")
+                raise LegimongoError(f"Invalid data of type: {type(data)}\nMust be a pandas DataFrame, dict, or list of dicts.")
             
             # Optionally, sync updated collection back into self.df
             if self.local_mem:
                 self.get_records(inplace=True)
 
         except Exception as e:
-            msg = f"Error while updating MongoDB collection:\n{e}"
-            _log(msg)
-            raise MongoDF.MongoError(msg)
+            raise LegimongoError(f"Error while updating MongoDB collection:\n{e}")
 
 
     def get_records(self,
@@ -707,7 +704,7 @@ class MongoDF:
             elif isinstance(search, list):
                 results = this_coll.aggregate(search)
             else:
-                raise ValueError(f"Invalid search of type {type(search)} - must be either dict (find) or list of dicts (aggregate)")
+                raise LegimongoError(f"Invalid search of type: {type(search)}\nMust be either dict (find) or list of dicts (aggregate)")
 
             if pandas or inplace:
                 results = pd.DataFrame(list(results))
@@ -717,9 +714,7 @@ class MongoDF:
                 return(results)
             
         except Exception as e:
-            msg = f"Unable to execute search query.\n{e}"
-            _log(msg)
-            raise MongoDF.MongoError(msg)
+            raise LegimongoError(f"Unable to execute search query.\n{e}")
 
         
     def count_records(self,
@@ -757,15 +752,13 @@ class MongoDF:
             
         try:
             if not isinstance(search, dict):
-                raise ValueError(f"Invalid search of type {type(search)} - must be a dict.")
+                raise LegimongoError(f"Invalid search of type: {type(search)}\nMust be a dict.")
                 
             count = self._COLL.count_documents(search)
             return(count)
             
         except Exception as e:
-            msg = f"Unable to execute search query.\n{e}"
-            _log(msg)
-            raise MongoDF.MongoError(msg)
+            raise LegimongoError(f"Unable to execute search query.\n{e}")
 
 
     def make_subsample( self,
@@ -825,8 +818,7 @@ class MongoDF:
 
         # Validate samp_size
         if not (isinstance(samp_size, float) and (0.0 <= samp_size <= 1.0)):
-            msg = f"Invalid parameter: {samp_size=} (must be between 0.0 and 1.0)"
-            raise ValueError()
+            raise LegimongoError(f"Invalid parameter: {samp_size=}\nMust be float between 0.0 and 1.0.")
         
         # Build list of states to filter on
         if isinstance(states, str):
@@ -921,9 +913,7 @@ class MongoDF:
                 self._MC[tar_db][new_coll].drop()
                 _log("Operation successful.", verbose)
             except Exception as e:
-                msg = f"Unable to drop collection.\n{e}"
-                _log(msg)
-                raise MongoDF.MongoError(msg)
+                raise LegimongoError(f"Unable to drop collection.\n{e}")
 
         # Copy records directly into new location
         pline_dict_03 = {"$match": {"bill_id": {"$in": rand_samp_flat}}}

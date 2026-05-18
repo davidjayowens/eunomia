@@ -24,6 +24,11 @@ def _log(msg:str, verbose:bool=False) -> None:
     if verbose:
         print(msg)
 
+class VisualizeError(Exception):
+    def __init__(self, msg):
+        log.error("Eunomia | VisualizeError exception encountered:\n" + msg, stacklevel=2)
+        super().__init__(msg)
+
 
 ##############################
 ##    Visualize Clusters    ##
@@ -189,9 +194,7 @@ class PlotPolars:
     @df.setter
     def df(self, new_data):
         if not isinstance(new_data, pd.DataFrame):
-            msg = f"Invalid object of type {type(new_data)} - must be pandas DataFrame."
-            _log(msg)
-            raise ValueError(msg)
+            raise VisualizeError(f"Invalid object of type {type(new_data)}\nMust be pandas DataFrame.")
         
         # Enforce RangeIndex - this will be used to merge with PCA-reduced features in .plot()
         self._df = new_data.reset_index(drop=True).copy()
@@ -203,9 +206,7 @@ class PlotPolars:
     @polar_df.setter
     def polar_df(self, new_data):
         if not isinstance(new_data, pd.DataFrame):
-            msg = f"Invalid object of type {type(new_data)} - must be pandas DataFrame."
-            _log(msg)
-            raise ValueError(msg)
+            raise ValueError(f"Invalid object of type {type(new_data)}\nMust be pandas DataFrame.")
         
         self._polar_df = new_data.copy()
 
@@ -222,13 +223,13 @@ class PlotPolars:
 
         if tfidf_col:
             if tfidf_col not in df_cols:
-                raise ValueError(f"Invalid value for parameter: {tfidf_col = }\nMust be one of {df_cols}")
+                raise VisualizeError(f"Invalid value for parameter: {tfidf_col=}\nMust be one of {df_cols}")
             
             self.tfidf_col = tfidf_col
 
         if cluster_col:
             if cluster_col not in df_cols:
-                raise ValueError(f"Invalid value for parameter: {cluster_col = }\nMust be one of {df_cols}")
+                raise VisualizeError(f"Invalid value for parameter: {cluster_col=}\nMust be one of {df_cols}")
             
             self.cluster_col = cluster_col
 
@@ -238,7 +239,7 @@ class PlotPolars:
         if scale_scope:
             valid_scale_scopes = ['collection', 'cluster', 'feature', 'vector']
             if scale_scope.lower() not in valid_scale_scopes:
-                raise ValueError(f"Invalid value for parameter: {scale_scope=}\nMust be one of {valid_scale_scopes}")
+                raise VisualizeError(f"Invalid value for parameter: {scale_scope=}\nMust be one of {valid_scale_scopes}")
             
             self.scale_scope = scale_scope.lower()
 
@@ -486,10 +487,10 @@ class PlotPolars:
                     raise Exception
 
             except:
-                raise ValueError(f'Invalid parameters:\n'
-                                 f'ticklabel_nterms = {kwargs.get('ticklabel_nterms')}\n'
-                                 f'ticklabel_radius = {kwargs.get('ticklabel_radius')}\n'
-                                  'Values must be non-negative integers (>= 0).')
+                raise VisualizeError(f'Invalid parameters:\n'
+                                     f'ticklabel_nterms = {kwargs.get('ticklabel_nterms')}\n'
+                                     f'ticklabel_radius = {kwargs.get('ticklabel_radius')}\n'
+                                      'Values must be non-negative integers (>= 0).')
             if n_terms > 0:
                 tick_labels = self._pca_feature_labels(n_terms=n_terms)
 
