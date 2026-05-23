@@ -32,6 +32,15 @@ CLUSTER_METHODS = {
 
 
 class DocCluster:
+    __slots__ = (
+        '_df',          # pandas DataFrame
+        '_text_col',    # str
+        '_method',      # str
+        '_clusterer',   # object
+        '_preconfig',   # bool
+        'verbose'       # bool
+    )
+
     def __init__(self,
                  df: pd.DataFrame,
                  text_col: str,
@@ -56,7 +65,7 @@ class DocCluster:
         """
         self.verbose = verbose
         
-        self.df = df                # Stored as self._df
+        self.df = df              
         self.text_col = text_col
 
         self.cluster_method = cluster_method
@@ -226,7 +235,7 @@ class DocCluster:
                 # Make final vector vocabulary
                 if self.verbose:
                     print(f"Making Level {level} Vector Vocab...")
-                vector_vocab = make_vocab(df=df_vector, min_df=min_df, max_df=max_df)
+                vector_vocab = make_vocab(df_vector=df_vector, min_doc_freq=min_df, max_doc_freq=max_df)
                 if self.verbose:
                     print(f"Vector Vocab complete - contains {len(vector_vocab)} terms.\n")
 
@@ -235,7 +244,7 @@ class DocCluster:
                     print(f"Making Level {level} Topic Frequency - Inverse Document Frequency vectors...")
                 self.df[tfidf_col] = None
                 for idx in self.df.index:
-                    self.df.at[idx, tfidf_col] = make_tfidf(tf=self.df.at[idx, tf_col], df=df_vector, vocab=vector_vocab, norm=tfidf_norm)
+                    self.df.at[idx, tfidf_col] = make_tfidf(tf_vector=self.df.at[idx, tf_col], df_vector=df_vector, vocab=vector_vocab, norm=tfidf_norm)
                 if self.verbose:
                     print("TF-IDF vectors complete.\n")
 
@@ -285,7 +294,7 @@ class DocCluster:
 
                 if self.verbose:
                     print(f"Making Level {level} Vector Vocab for Cluster {use_level}-{cluster_id}...")
-                vector_vocab = make_vocab(df=df_vector, min_df=min_df, max_df=max_df)
+                vector_vocab = make_vocab(df_vector=df_vector, min_doc_freq=min_df, max_doc_freq=max_df)
                 if self.verbose:
                     print(f"Vector Vocab complete - contains {len(vector_vocab)} terms.")
 
@@ -293,7 +302,7 @@ class DocCluster:
                 if self.verbose:
                     print(f"Making Level {level} Topic Frequency - Inverse Document Frequency vectors for Cluster {use_level}-{cluster_id}...")
                 for idx in this_cluster_idxs:
-                    self.df.at[idx, tfidf_col] = make_tfidf(tf=self.df.at[idx, use_tf_col], df=df_vector, vocab=vector_vocab, norm=tfidf_norm)
+                    self.df.at[idx, tfidf_col] = make_tfidf(tf_vector=self.df.at[idx, use_tf_col], df_vector=df_vector, vocab=vector_vocab, norm=tfidf_norm)
                 if self.verbose:
                     print("TF-IDF vectors complete.\n")
 
@@ -737,7 +746,7 @@ class DocCluster:
                     sub_level: int | None = None) -> pd.DataFrame:
         """ 
         Return the current collection with only two features, used by 
-        eunomia.visualizer for making plots: 
+        eunomia.visualizer.PlotPolars for making plots: 
         > tfidf column: Contains TF-IDF vectors
         > cluster column: Contains cluster labels
 
@@ -774,6 +783,56 @@ class DocCluster:
             
             return(self.df.loc[(self.df[cluster_col] != -1), 
                                 [tfidf_col, cluster_col]])
+
+
+    def make_doc_df(self,
+                    base_level: int = 1,
+                    base_cluster: int | None = None,
+                    sub_level: int | None = None,
+                    text_col: str = 'text_body') -> pd.DataFrame:
+        """ 
+        Return the current collection with only two features, used by 
+        eunomia.visualizer.DocDiff for highlighting document similarities
+        and differences: 
+        > text column: Contains document texts
+        > cluster column: Contains cluster labels
+
+        If looking at sub-clusters, only the sub-clusters of a given
+        base cluster are included in results.
+
+        Parameters
+        ----------
+        base_level : int, default 1
+            Level ID of the basis clusters. If visualizing sub-clusters,
+            should correspond to use_level param from clustering.make_sub_clusters().
+
+        base_cluster : int, optional
+            Cluster ID of the the sub-clusters' base cluster. Not used when 
+            visualizing base clusters.
+        
+        sub_level : int, optional
+            Level ID of the sub-clusters. Not used when visualizing base clusters.
+            
+        text_body : str, default 'text_body'
+            The column label where the document texts are stored.
+
+        """
+        if sub_level:
+            #tfidf_col = f'lvl{sub_level}_tfidf'
+            cluster_col = f'lvl{sub_level}_cluster'
+
+            base_cluster_col = f'lvl{base_level}_cluster'
+
+            return(self.df.loc[(self.df[base_cluster_col] == base_cluster)
+                             & (self.df[cluster_col] != -1),
+                                [text_col, cluster_col]])
+
+        else:
+            #tfidf_col = f'lvl{base_level}_tfidf'
+            cluster_col = f'lvl{base_level}_cluster'
+            
+            return(self.df.loc[(self.df[cluster_col] != -1), 
+                                [text_col, cluster_col]])
 
 
     def get_cluster_centroids(self):

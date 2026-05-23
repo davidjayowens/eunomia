@@ -35,6 +35,17 @@ class VisualizeError(Exception):
 ##############################
 
 class PlotPolars:
+    __slots__ = (
+        '_df',          # pandas DataFrame
+        'tfidf_col',    # str
+        'cluster_col',  # str
+        'max_feats',    # int
+        'scale_scope',  # str
+        '_polar_df',    # pandas DataFrame
+        '_pca_model',   # pandas DataFrame
+        'verbose',      # bool
+    )
+
     def __init__(   self,
                     df: pd.DataFrame,
                     tfidf_col: str, 
@@ -43,7 +54,9 @@ class PlotPolars:
                     scale_scope: Literal['collection', 'cluster', 'feature', 'vector'] = 'collection',
                     verbose: bool = False):
         """
-        Visualizer for document clusters
+        PlotPolars creates radial plots to visualize document clusters. It
+        simplifies the Plotly interface, while still giving users the flexibility
+        to customize plots with fine-tuned adjustments.
 
         Parameters
         ----------
@@ -153,24 +166,19 @@ class PlotPolars:
 
         """
         self.verbose = verbose
-
         self.df = df
 
-        # DataFrame used in plotting and labeling clusters
+        # Construct DataFrames used in plotting and labeling clusters
         self.update_polar_df(   tfidf_col=tfidf_col,
                                 cluster_col=cluster_col,
                                 max_feats=max_feats,
                                 scale_scope=scale_scope)
-        # Implicitly sets:
-        # self.tfidf_col 
-        # self.cluster_col 
-        # self.max_feats 
-        # self.scale_scope
-        # self.pca_model
-        # self.polar_df
         
     # END OF __init__
 
+    ######################################
+    ##    PlotPolars Special Methods    ##
+    ######################################
 
     def __repr__(self):
         return(f"PlotPolars(df=<pd.DataFrame>, tfidf_col={self.tfidf_col}, "
@@ -188,8 +196,13 @@ class PlotPolars:
                )
 
 
+    ##################################
+    ##    PlotPolars Attributes:    ##
+    ##      Getters & Setters       ##
+    ##################################
+
     @property
-    def df(self):
+    def df(self) -> pd.DataFrame:
         return(self._df)
     @df.setter
     def df(self, new_data):
@@ -200,16 +213,10 @@ class PlotPolars:
         self._df = new_data.reset_index(drop=True).copy()
 
 
-    @property
-    def polar_df(self):
-        return(self._polar_df)
-    @polar_df.setter
-    def polar_df(self, new_data):
-        if not isinstance(new_data, pd.DataFrame):
-            raise ValueError(f"Invalid object of type {type(new_data)}\nMust be pandas DataFrame.")
-        
-        self._polar_df = new_data.copy()
-
+    ##################################
+    ##    PlotPolars Attributes:    ##
+    ##       Updater Methods        ##
+    ##################################
 
     def update_polar_df(self,
                         tfidf_col: str | None = None,
@@ -256,9 +263,9 @@ class PlotPolars:
 
         # Reduce (by PCA) to a number of features that can be visualized
         num_feats = min(self.max_feats, tfidf_df.shape[0], tfidf_df.shape[1])
-        self.pca_model = PCA(n_components=num_feats).fit(tfidf_df)
+        self._pca_model = PCA(n_components=num_feats).fit(tfidf_df)
         
-        pca_df = pd.DataFrame(self.pca_model.transform(tfidf_df), index=self.df.index)
+        pca_df = pd.DataFrame(self._pca_model.transform(tfidf_df), index=self.df.index)
         
         # Scale all data to [0,1] range
         if self.scale_scope == 'collection':
@@ -305,8 +312,12 @@ class PlotPolars:
         for str_feat in ['pca_feat', 'cluster_id']:
             polar_df[str_feat] = polar_df[str_feat].astype(str)
 
-        self.polar_df = polar_df
+        self._polar_df = polar_df
 
+
+    ######################################
+    ##    PlotPolars Primary Methods    ##
+    ######################################
     
     def plot(   self, 
                 cluster_ids: list[int|str] | None = None, 
@@ -373,7 +384,7 @@ class PlotPolars:
         """
 
         if cluster_ids is None:
-            cluster_ids = self.polar_df.cluster_id.unique().tolist()
+            cluster_ids = self._polar_df.cluster_id.unique().tolist()
         elif not isinstance(cluster_ids, list):
             cluster_ids = [cluster_ids]
 
@@ -413,12 +424,12 @@ class PlotPolars:
                             specs=specs, 
                             horizontal_spacing=kwargs.get('horizontal_spacing',0),
                             vertical_spacing=kwargs.get('vertical_spacing',0.0))
-            
+
         # Add trace for each cluster
         row = 1
         col = 1
         for cluster in sorted_cluster_ids:
-            cluster_df = self.polar_df.loc[self.polar_df.cluster_id==cluster]
+            cluster_df = self._polar_df.loc[self._polar_df.cluster_id==cluster]
             fig.add_trace(  go.Scatterpolar(r=cluster_df['pca_score'], 
                                             theta=cluster_df['pca_feat'],
                                             mode='lines', 
@@ -529,7 +540,7 @@ class PlotPolars:
         # Feature names are uniform across all the vectors; grabbing the first one arbitrarily
         feat_names = self.df.at[0,self.tfidf_col].index
         
-        components = self.pca_model.components_.copy()
+        components = self._pca_model.components_.copy()
         if abs:
             components = np.abs(components)
         
@@ -556,6 +567,16 @@ class DocDiff:
     def __init__(self,
                  df: pd.DataFrame,
                  ):
+        """
+        DocDiff creates visual displays of documents, highlighting similarities
+        and differences, to facilitate analysis of document clusters.
+
+        Parameters
+        ----------
+        df : pandas DataFrame
+            Clustered data, as produced by eunomia.clustering.DocCluster.
+
+        """
         self._df = df.copy()
 
 

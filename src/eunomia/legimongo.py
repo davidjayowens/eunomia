@@ -35,11 +35,24 @@ class LegimongoError(Exception):
 
 
 class Legiscan2Mongo:
+    __slots__ = (
+        'mongo_db', 
+        'mongo_coll',
+        'verbose',
+        'Mongo',
+        '_df',
+        '_data_dir',
+        'loading_fails',
+        'decoding_fails'
+        )
+
     def __init__(self,
                  mongo_db: str,
                  mongo_coll: str,
                  verbose: bool = False) -> object:
         """
+        Class to load LegiScan data into MongoDB and decode bill texts.
+
         Parameters
         ----------
         mongo_db : str
@@ -58,10 +71,6 @@ class Legiscan2Mongo:
         self.mongo_coll = mongo_coll
         self.Mongo = MongoDF(db=mongo_db, coll=mongo_coll, local_mem=False, verbose=verbose)
 
-        # Potential attributes
-        self.df: pd.DataFrame   # Used by load_df()
-        self.data_dir: Path     # Used by load_zips()
-
         self.loading_fails = []    # Stores details of bills which could not be loaded
         self.decoding_fails = []   # Stores details of bills which could not be decoded
 
@@ -69,11 +78,9 @@ class Legiscan2Mongo:
 
     # END OF __init__
 
-
-    #####################################
-    ##    Legiscan2Mongo Attributes:   ## 
-    ##        Getters & Setters        ##
-    #####################################
+    ##########################################
+    ##    Legiscan2Mongo Special Methods    ##
+    ##########################################
 
     def __repr__(self):
         return(f"Legiscan2Mongo(mongo_db={self.mongo_db}, mongo_coll={self.mongo_coll}, verbose={self.verbose})")
@@ -86,8 +93,13 @@ class Legiscan2Mongo:
               )
     
 
+    #####################################
+    ##    Legiscan2Mongo Attributes:   ## 
+    ##        Getters & Setters        ##
+    #####################################
+
     @property
-    def df(self):
+    def df(self) -> pd.DataFrame:
         return(self._df)
     @df.setter
     def df(self, new_data):
@@ -99,7 +111,7 @@ class Legiscan2Mongo:
 
 
     @property
-    def data_dir(self):
+    def data_dir(self) -> Path:
         return(self._data_dir)
     @data_dir.setter
     def data_dir(self, new_dir):
@@ -112,9 +124,9 @@ class Legiscan2Mongo:
         self._data_dir = new_path
 
 
-    ##################################
-    ##    Legiscan2Mongo Methods    ##
-    ##################################
+    ##########################################
+    ##    Legiscan2Mongo Primary Methods    ##
+    ##########################################
 
     def load_df(self,
                 df: pd.DataFrame,
@@ -481,6 +493,18 @@ class Legiscan2Mongo:
 
 
 class MongoDF:
+    __slots__ = (
+        'local_mem',
+        'df_in',
+        'verbose',
+        '_MC',
+        '_db',
+        '_DB',
+        '_coll',
+        '_COLL',
+        '_df'
+    )
+
     def __init__(self,
                  mongo_db: str,
                  mongo_coll: str,
@@ -513,12 +537,8 @@ class MongoDF:
         self.verbose = verbose
         self.local_mem = local_mem
         
-        # Connect to MongoDB collection and create a local DataFrame from it
-        # NOTE: These should not be accessed by the user directly and their
-        #       setter methods are encapsulated by the .db and .coll properties.
+        # Connect to MongoDB
         self._MC = pymongo.MongoClient()
-        #self._DB and self._COLL are set implicitly by use_coll()
-        
         self.use_coll(mongo_db, mongo_coll)
         
         self.df_in = isinstance(df, pd.DataFrame)
@@ -529,10 +549,9 @@ class MongoDF:
             
     # END OF __init__
 
-
-    ##############################
-    ##    MongoDF Properties    ##
-    ##############################
+    ###################################
+    ##    MongoDF Special Methods    ##
+    ###################################
 
     def __repr__(self):
         return(f"MongoDF(mongo_db={self.mongo_db}, mongo_coll={self.mongo_coll}, local_mem={self.local_mem}, "
@@ -547,8 +566,13 @@ class MongoDF:
                f"verbose = {self.verbose})")
 
 
-    @property           # self.mongo_db getter & setter
-    def mongo_db(self):
+    ###############################
+    ##    MongoDF Attributes:    ##
+    ##     Getters & Setters     ##
+    ###############################
+
+    @property  
+    def mongo_db(self) -> str:
         return(self._db)
     @mongo_db.setter
     def mongo_db(self, new_db):
@@ -556,8 +580,8 @@ class MongoDF:
         self._DB = self._MC[self._db]
 
 
-    @property           # self.mongo_coll getter & setter
-    def mongo_coll(self):
+    @property
+    def mongo_coll(self) -> str:
         return(self._coll)
     @mongo_coll.setter
     def mongo_coll(self, new_coll):
@@ -565,8 +589,8 @@ class MongoDF:
         self._COLL = self._DB[self._coll]
 
 
-    @property           # self.df getter & setter
-    def df(self):
+    @property
+    def df(self) -> pd.DataFrame:
         return(self._df)
     @df.setter 
     def df(self, new_data):
@@ -577,7 +601,10 @@ class MongoDF:
         self._df = new_data.copy()
     
 
-    # Updaters
+    ###############################
+    ##    MongoDF Attributes:    ##
+    ##      Updater Methods      ##
+    ###############################
 
     def use_coll(   self,
                     mongo_db: str | None = None,
@@ -602,11 +629,11 @@ class MongoDF:
         
         if self.local_mem:
             self.get_records(inplace=True)
+    # Aliases:
+    use_collection = use_coll
+    set_coll = use_coll
+    set_collection = use_coll
     
-
-    ###########################
-    ##    MongoDF Methods    ##
-    ###########################
 
     def _update_mongo(  self,
                         data: dict | list[dict] | pd.DataFrame):
@@ -646,7 +673,11 @@ class MongoDF:
 
         except Exception as e:
             raise LegimongoError(f"Error while updating MongoDB collection:\n{e}")
+        
 
+    ###################################
+    ##    MongoDF Primary Methods    ##
+    ###################################
 
     def get_records(self,
                     search: dict | list[dict] | None = None,
