@@ -10,6 +10,13 @@ from nltk.tokenize import sent_tokenize, word_tokenize
 from nltk.stem.snowball import SnowballStemmer
 from nltk.util import ngrams
 
+import logging
+log = logging.getLogger(__name__)
+
+def _log(msg:str) -> None:
+    """ Log msg at debug level and optionally print to stdout. """
+    log.debug(msg, stacklevel=2)
+
 
 def make_bow(text: str, 
              filter: bool = True, 
@@ -249,9 +256,9 @@ def make_df(tf_vectors: pd.Series[pd.Series]) -> pd.Series:
     return(doc_freq)
 
 
-def make_vocab(df: pd.Series, 
-               min_df: float = 0.0, 
-               max_df: float = 1.0) -> list:
+def make_vocab(df_vector: pd.Series, 
+               min_doc_freq: float = 0.0, 
+               max_doc_freq: float = 1.0) -> list:
     """
     Take document frequencies dictionary and filter by min/max_df.
 
@@ -260,16 +267,16 @@ def make_vocab(df: pd.Series,
 
     Parameters
     ----------
-    df : Series
+    df_vector : Series
         Document frequencies dictionary, as produced by make_df().
 
-    min_df : float, between 0.0 and 1.0
+    min_doc_freq : float, between 0.0 and 1.0
         Minimum allowed document frequency for inclusion in the vector vocab.
 
-    max_df : float, between 0.0 and 1.0
+    max_doc_freq : float, between 0.0 and 1.0
         Maximum allowed document frequency for inclusion in the vector vocab.
     """
-    vocab = df.loc[(min_df <= df) & (df <= max_df)].index.tolist()
+    vocab = df_vector.loc[(min_doc_freq <= df_vector) & (df_vector <= max_doc_freq)].index.tolist()
     
     return(vocab)
 
@@ -286,8 +293,8 @@ def unit_vector(vector: pd.Series[float | int]) -> pd.Series:
     return(normalized_vector)
 
 
-def make_tfidf(tf: pd.Series, 
-               df: pd.Series, 
+def make_tfidf(tf_vector: pd.Series, 
+               df_vector: pd.Series, 
                vocab: list,
                norm: bool | Literal['max'] = False) -> dict:
     """
@@ -295,29 +302,29 @@ def make_tfidf(tf: pd.Series,
 
     Parameters
     ----------
-    tf : Series
-        Term frequencies dictionary, as produced by make_tf().
+    tf_vector : Series
+        Term frequencies vector, as produced by make_tf().
         This will be unique for each document.
 
-    df : Series
-        Document frequencies dictionary, as produced by make_df().
+    df_vector : Series
+        Document frequencies vector, as produced by make_df().
         All documents in a sample must use the same value for this parameter.
 
     vocab : list
-        Vector vocabulary list, as produced by make_vocab().
+        List of terms to retain in TF-IDF, as produced by make_vocab().
         All documents in a sample must use the same value for this parameter.
 
     norm : bool or 'max', default False
         If True, normalizes all values in the vector;
-        if False, the true TF-IDF scores are returned;
+        if False, the raw TF-IDF scores are returned;
         if 'max', all values greater than 0 will be set to 1,
-        which allows for clustering on the presence/absence of vocab terms.
+        which allows for clustering on the simple presence/absence of vocab terms.
     """
     # {term: tf-idf} for term in document frequencies if term is in vector vocab
     if norm == 'max':
-        tfidf = (tf * df).fillna(0).astype(bool).astype(int)
+        tfidf = (tf_vector * df_vector).fillna(0).astype(bool).astype(int)
     else:
-        tfidf = (tf * np.log(1 + (1/df))).fillna(0)
+        tfidf = (tf_vector * np.log(1 + (1/df_vector))).fillna(0)
     tfidf = tfidf.loc[tfidf.index.isin(vocab)]
 
     if norm is True:
