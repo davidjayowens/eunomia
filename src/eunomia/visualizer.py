@@ -13,7 +13,8 @@ from sklearn.decomposition import PCA
 
 import difflib
 import re
-from nltk.tokenize import sent_tokenize
+#from nltk.tokenize import sent_tokenize
+import networkx as nx
 
 import logging
 log = logging.getLogger(__name__)

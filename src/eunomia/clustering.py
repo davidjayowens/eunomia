@@ -740,6 +740,21 @@ class DocCluster:
             print("Cluster processing complete.")
 
 
+    def get_clusters(self,
+                    base_level: int = 1,
+                    sub_level: int | None = None) -> pd.DataFrame:
+        """
+        Returns  cluster hierarchies as a DataFrame.
+        """
+        if sub_level:
+            return(self.df.loc[(self.df[sub_level]!=-1),
+                               [base_level, sub_level]]\
+                            .groupby(base_level, as_index=False)[sub_level].unique())
+        else:
+            return(self.df.loc[(self.df[base_level]!=-1),
+                               [base_level]].sort_values(by=base_level).drop_duplicates(ignore_index=True))
+
+
     def make_viz_df(self,
                     base_level: int = 1,
                     base_cluster: int | None = None,
@@ -787,15 +802,17 @@ class DocCluster:
 
     def make_doc_df(self,
                     base_level: int = 1,
-                    base_cluster: int | None = None,
                     sub_level: int | None = None,
-                    text_col: str = 'text_body') -> pd.DataFrame:
+                    text_col: str = 'text_body',
+                    id_col: str = 'bill_id',
+                    clusters: int | list[int] | dict[int:int|int:list[int]] | None = None) -> pd.DataFrame:
         """ 
-        Return the current collection with only two features, used by 
-        eunomia.visualizer.DocDiff for highlighting document similarities
+        Return the current collection with only x features, used by 
+        eunomia.visualizer.PlotDocs for highlighting document similarities
         and differences: 
         > text column: Contains document texts
         > cluster column: Contains cluster labels
+        > id column: Contains document identifiers
 
         If looking at sub-clusters, only the sub-clusters of a given
         base cluster are included in results.
@@ -805,16 +822,21 @@ class DocCluster:
         base_level : int, default 1
             Level ID of the basis clusters. If visualizing sub-clusters,
             should correspond to use_level param from clustering.make_sub_clusters().
-
-        base_cluster : int, optional
-            Cluster ID of the the sub-clusters' base cluster. Not used when 
-            visualizing base clusters.
         
         sub_level : int, optional
-            Level ID of the sub-clusters. Not used when visualizing base clusters.
+            Level ID of the sub-clusters. Not used when only visualizing base 
+            clusters.
             
-        text_body : str, default 'text_body'
+        text_col : str, default 'text_body'
             The column label where the document texts are stored.
+
+        id_col : str, default 'bill_id'
+
+        clusters : int or list of them, or dict, optional
+            Cluster ID(s) to include in the returned DataFrame. If int or list
+            is provided, filters clusters at base_level. If sub_level is not
+            None, can pass a dict to clusters like {base_cluster_id:sub_cluster_id}
+            or {base_cluster_id:[sub_cluster_ids]}
 
         """
         if sub_level:
