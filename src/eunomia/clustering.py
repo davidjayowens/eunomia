@@ -747,12 +747,12 @@ class DocCluster:
         Returns  cluster hierarchies as a DataFrame.
         """
         if sub_level:
-            return(self.df.loc[(self.df[sub_level]!=-1),
-                               [base_level, sub_level]]\
-                            .groupby(base_level, as_index=False)[sub_level].unique())
+            return(self.df.loc[(self.df[f'lvl{sub_level}_cluster']!=-1),
+                               [f'lvl{base_level}_cluster', f'lvl{sub_level}_cluster']]\
+                            .groupby(f'lvl{base_level}_cluster', as_index=False)[f'lvl{sub_level}_cluster'].unique())
         else:
-            return(self.df.loc[(self.df[base_level]!=-1),
-                               [base_level]].sort_values(by=base_level).drop_duplicates(ignore_index=True))
+            return(self.df.loc[(self.df[f'lvl{base_level}_cluster']!=-1),
+                               [f'lvl{base_level}_cluster']].sort_values(by=f'lvl{base_level}_cluster').drop_duplicates(ignore_index=True))
 
 
     def make_viz_df(self,
@@ -803,19 +803,17 @@ class DocCluster:
     def make_doc_df(self,
                     base_level: int = 1,
                     sub_level: int | None = None,
-                    text_col: str = 'text_body',
                     id_col: str = 'bill_id',
-                    clusters: int | list[int] | dict[int:int|int:list[int]] | None = None) -> pd.DataFrame:
+                    text_col: str = 'text_body',
+                    base_clusters: int | list[int] | None = None) -> pd.DataFrame:
         """ 
         Return the current collection with only x features, used by 
         eunomia.visualizer.PlotDocs for highlighting document similarities
         and differences: 
-        > text column: Contains document texts
-        > cluster column: Contains cluster labels
+        
         > id column: Contains document identifiers
-
-        If looking at sub-clusters, only the sub-clusters of a given
-        base cluster are included in results.
+        > cluster column: Contains cluster labels
+        > text column: Contains document texts
 
         Parameters
         ----------
@@ -832,30 +830,45 @@ class DocCluster:
 
         id_col : str, default 'bill_id'
 
-        clusters : int or list of them, or dict, optional
-            Cluster ID(s) to include in the returned DataFrame. If int or list
-            is provided, filters clusters at base_level. If sub_level is not
-            None, can pass a dict to clusters like {base_cluster_id:sub_cluster_id}
-            or {base_cluster_id:[sub_cluster_ids]}
+        base_clusters : int or list of them, optional
+            Base cluster ID(s) to include in the returned DataFrame. Default
+            is all cluster IDs not including -1. If sub_level is not None, 
+            all sub-clusters of the provided base_cluster(s) will be included,
+            not including -1.
 
         """
-        if sub_level:
-            #tfidf_col = f'lvl{sub_level}_tfidf'
-            cluster_col = f'lvl{sub_level}_cluster'
+        if isinstance(base_clusters, int):
+            base_clusters = [base_clusters]
 
+        if sub_level:
+            cluster_col = f'lvl{sub_level}_cluster'
             base_cluster_col = f'lvl{base_level}_cluster'
 
-            return(self.df.loc[(self.df[base_cluster_col] == base_cluster)
-                             & (self.df[cluster_col] != -1),
-                                [text_col, cluster_col]])
+            if base_clusters:
+                return(self.df.loc[(self.df[base_cluster_col] != -1)
+                                 & (self.df[base_cluster_col].isin(base_clusters))
+                                 & (self.df[cluster_col] != -1),
+                                    [id_col, cluster_col, text_col]]
+                        )
+            else:
+                return(self.df.loc[(self.df[base_cluster_col] != -1)
+                                 & (self.df[cluster_col] != -1),
+                                    [id_col, cluster_col, text_col]]
+                        )
 
         else:
-            #tfidf_col = f'lvl{base_level}_tfidf'
             cluster_col = f'lvl{base_level}_cluster'
-            
-            return(self.df.loc[(self.df[cluster_col] != -1), 
-                                [text_col, cluster_col]])
 
+            if base_clusters:
+                return(self.df.loc[(self.df[cluster_col] != -1)
+                                 & (self.df[cluster_col].isin(base_clusters)),
+                                    [id_col, cluster_col, text_col]]
+                        )
+            else:
+                return(self.df.loc[(self.df[cluster_col] != -1),
+                                    [id_col, cluster_col, text_col]]
+                        )
+    
 
     def get_cluster_centroids(self):
         """
