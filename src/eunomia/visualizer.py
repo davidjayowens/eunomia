@@ -424,7 +424,7 @@ class PlotPolars:
         fig = make_subplots(rows=rows, cols=cols,
                             specs=specs, 
                             horizontal_spacing=kwargs.get('horizontal_spacing',0),
-                            vertical_spacing=kwargs.get('vertical_spacing',0.0))
+                            vertical_spacing=kwargs.get('vertical_spacing',0))
 
         # Add trace for each cluster
         row = 1
