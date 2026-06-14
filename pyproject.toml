@@ -25,7 +25,8 @@ dependencies = [
   "plotly",
   "bs4",
   "tika",
-  "striprtf"
+  "striprtf",
+  "pymongo"
 ]
 
 [project.urls]
