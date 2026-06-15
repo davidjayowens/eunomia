@@ -848,12 +848,12 @@ class DocCluster:
                 return(self.df.loc[(self.df[base_cluster_col] != -1)
                                  & (self.df[base_cluster_col].isin(base_clusters))
                                  & (self.df[cluster_col] != -1),
-                                    [id_col, cluster_col, text_col]]
+                                    [id_col, base_cluster_col, cluster_col, text_col]]
                         )
             else:
                 return(self.df.loc[(self.df[base_cluster_col] != -1)
                                  & (self.df[cluster_col] != -1),
-                                    [id_col, cluster_col, text_col]]
+                                    [id_col, base_cluster_col, cluster_col, text_col]]
                         )
 
         else:
