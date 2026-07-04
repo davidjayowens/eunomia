@@ -745,20 +745,98 @@ class DocCluster:
                     sub_level: int | None = None) -> pd.DataFrame:
         """
         Returns  cluster hierarchies as a DataFrame.
+
+        TODO: Include counts
         """
         if sub_level:
             return(self.df.loc[(self.df[f'lvl{sub_level}_cluster']!=-1),
                                [f'lvl{base_level}_cluster', f'lvl{sub_level}_cluster']]\
-                            .groupby(f'lvl{base_level}_cluster', as_index=False)[f'lvl{sub_level}_cluster'].unique())
+                            .groupby(f'lvl{base_level}_cluster', as_index=False)[f'lvl{sub_level}_cluster'].value_counts().style.hide())
         else:
-            return(self.df.loc[(self.df[f'lvl{base_level}_cluster']!=-1),
-                               [f'lvl{base_level}_cluster']].sort_values(by=f'lvl{base_level}_cluster').drop_duplicates(ignore_index=True))
+            return(pd.DataFrame(self.df.loc[(self.df[f'lvl{base_level}_cluster']!=-1),
+                               [f'lvl{base_level}_cluster']].value_counts()).reset_index().style.hide())
 
 
-    def make_viz_df(self,
-                    base_level: int = 1,
-                    base_cluster: int | None = None,
-                    sub_level: int | None = None) -> pd.DataFrame:
+    def _make_viz_df(self,
+                     viz_type: Literal['polars', 'docs'],
+                     base_level: int = 1,
+                     base_clusters: int | list[int] | None = None,
+                     sub_level: int | None = None) -> pd.DataFrame:
+        """ 
+        Return the current collection with only the features required by 
+        eunomia.visualizer for making plots with PlotPolars or PlotDocs: 
+        PlotPolars:
+        > cluster column: Contains cluster labels at specified level (base/sub)
+        > tfidf column: Contains TF-IDF vectors
+        PlotDocs:
+        > base_cluster column: Base cluster labels
+        > sub_cluster column (optional): Sub cluster labels
+        > text column: Document texts
+
+
+        Parameters
+        ----------
+        viz_type : 'polars' or 'docs'
+            Produces DataFrame with features for the visualization method
+
+        base_level: int, default 1
+            Level ID of the basis clusters. If visualizing sub-clusters,
+            should correspond to use_level param from clustering.make_sub_clusters().
+
+        base_clusters: int or list of them, optional
+            Cluster ID(s) of the the sub-clusters' base cluster(s). Not used when 
+            visualizing base clusters.
+        
+        sub_level: int, optional
+            Level ID of the sub-clusters. Not used when visualizing base clusters.
+            
+        """
+        if viz_type not in ['polars', 'docs']:
+            raise ClusterError(f"Invalid parameter: {viz_type=}\nMust be one of: ['polars', 'docs']")
+        
+        base_cluster_col = f'lvl{base_level}_cluster'
+        text_col = 'text_body'
+
+        filters = [f"{base_cluster_col} != -1"]
+
+        if isinstance(base_clusters, int):
+            base_clusters = [base_clusters]
+        if base_clusters:
+            filters.append(f"{base_cluster_col} in {base_clusters}")
+        
+        if sub_level:   # Include sub-clusters
+            sub_cluster_col = f'lvl{sub_level}_cluster'
+            filters.append(f"{sub_cluster_col} != -1")
+
+            if viz_type == 'polars':
+                tfidf_col = f'lvl{sub_level}_tfidf'
+                df_cols = [sub_cluster_col, tfidf_col]
+                sort_cols = [sub_cluster_col]
+
+            else:   # docs
+                df_cols = [base_cluster_col, sub_cluster_col, text_col]
+                sort_cols = [base_cluster_col, sub_cluster_col]
+
+        else:       # Base clusters only
+            df_cols = [base_cluster_col]
+            sort_cols = [base_cluster_col]
+
+            if viz_type == 'polars':
+                tfidf_col = f'lvl{base_level}_tfidf'
+                df_cols.append(tfidf_col)
+            
+            else:   # docs
+                df_cols.append(text_col)
+
+        filter_query = ' & '.join(filters)
+
+        return(self.df.query(filter_query)[df_cols].sort_values(by=sort_cols, ignore_index=True))
+
+
+    def make_polar_df(self,
+                      base_level: int = 1,
+                      base_cluster: int | None = None,
+                      sub_level: int | None = None) -> pd.DataFrame:
         """ 
         Return the current collection with only two features, used by 
         eunomia.visualizer.PlotPolars for making plots: 
@@ -782,36 +860,21 @@ class DocCluster:
             Level ID of the sub-clusters. Not used when visualizing base clusters.
             
         """
-        if sub_level:
-            tfidf_col = f'lvl{sub_level}_tfidf'
-            cluster_col = f'lvl{sub_level}_cluster'
-
-            base_cluster_col = f'lvl{base_level}_cluster'
-
-            return(self.df.loc[(self.df[base_cluster_col] == base_cluster)
-                             & (self.df[cluster_col] != -1),
-                                [tfidf_col, cluster_col]])
-
-        else:
-            tfidf_col = f'lvl{base_level}_tfidf'
-            cluster_col = f'lvl{base_level}_cluster'
-            
-            return(self.df.loc[(self.df[cluster_col] != -1), 
-                                [tfidf_col, cluster_col]])
+        return(self._make_viz_df(viz_type='polars',
+                                 base_level=base_level,
+                                 base_clusters=base_cluster,
+                                 sub_level=sub_level))
 
 
     def make_doc_df(self,
                     base_level: int = 1,
-                    sub_level: int | None = None,
-                    id_col: str = 'bill_id',
-                    text_col: str = 'text_body',
-                    base_clusters: int | list[int] | None = None) -> pd.DataFrame:
+                    base_clusters: int | list[int] | None = None,
+                    sub_level: int | None = None) -> pd.DataFrame:
         """ 
         Return the current collection with only x features, used by 
         eunomia.visualizer.PlotDocs for highlighting document similarities
         and differences: 
         
-        > id column: Contains document identifiers
         > cluster column: Contains cluster labels
         > text column: Contains document texts
 
@@ -821,72 +884,18 @@ class DocCluster:
             Level ID of the basis clusters. If visualizing sub-clusters,
             should correspond to use_level param from clustering.make_sub_clusters().
         
-        sub_level : int, optional
-            Level ID of the sub-clusters. Not used when only visualizing base 
-            clusters.
-            
-        text_col : str, default 'text_body'
-            The column label where the document texts are stored.
-
-        id_col : str, default 'bill_id'
-
         base_clusters : int or list of them, optional
             Base cluster ID(s) to include in the returned DataFrame. Default
             is all cluster IDs not including -1. If sub_level is not None, 
             all sub-clusters of the provided base_cluster(s) will be included,
             not including -1.
 
+        sub_level : int, optional
+            Level ID of the sub-clusters. Not used when only visualizing base 
+            clusters.
+
         """
-        if isinstance(base_clusters, int):
-            base_clusters = [base_clusters]
-
-        if sub_level:
-            cluster_col = f'lvl{sub_level}_cluster'
-            base_cluster_col = f'lvl{base_level}_cluster'
-
-            if base_clusters:
-                return(self.df.loc[(self.df[base_cluster_col] != -1)
-                                 & (self.df[base_cluster_col].isin(base_clusters))
-                                 & (self.df[cluster_col] != -1),
-                                    [id_col, base_cluster_col, cluster_col, text_col]]
-                        )
-            else:
-                return(self.df.loc[(self.df[base_cluster_col] != -1)
-                                 & (self.df[cluster_col] != -1),
-                                    [id_col, base_cluster_col, cluster_col, text_col]]
-                        )
-
-        else:
-            cluster_col = f'lvl{base_level}_cluster'
-
-            if base_clusters:
-                return(self.df.loc[(self.df[cluster_col] != -1)
-                                 & (self.df[cluster_col].isin(base_clusters)),
-                                    [id_col, cluster_col, text_col]]
-                        )
-            else:
-                return(self.df.loc[(self.df[cluster_col] != -1),
-                                    [id_col, cluster_col, text_col]]
-                        )
-    
-
-    def get_cluster_centroids(self):
-        """
-        Get the average tf-idf vector defining each cluster.
-        
-        TODO
-        """
-        pass
-
-
-    def get_cluster_bills(self,
-                          main_level: int,
-                          main_level_id: int,
-                          base_level: int | None = None,
-                          base_level_id: int | None = None) -> list:
-        """
-        Get the bills in target cluster
-        
-        TODO
-        """
-        pass
+        return(self._make_viz_df(viz_type='docs',
+                                 base_level=base_level,
+                                 base_clusters=base_clusters,
+                                 sub_level=sub_level))
