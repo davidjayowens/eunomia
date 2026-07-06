@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Literal
-from collections import Counter
+from collections import Counter, defaultdict
 import re
 
 import numpy as np
@@ -517,7 +517,7 @@ class PlotPolars:
                                     }})
 
         if inplace:
-            fig.show()
+            fig.show(config={'doubleClick': 'reset', 'displayModeBar': False})
         else:
             return(fig)
 
@@ -573,7 +573,10 @@ class PlotDocs:
         'base_cluster_col',     # str
         'sub_cluster_col',      # str
         'text_col',             # str
-
+        'scale_factor',         # float
+        'graphs',               # dict
+        'images',               # dict
+        'text_counts',          # dict
         'verbose'               # bool
     )
 
@@ -582,7 +585,7 @@ class PlotDocs:
                  base_cluster_col: str = 'lvl1_cluster',
                  sub_cluster_col: str | None = None,
                  text_col: str = 'text_body',
-
+                 scale_factor: float = 0.85,
                  verbose: bool = False):
         """
         PlotDocs creates visual displays of documents, highlighting similarities
@@ -601,10 +604,17 @@ class PlotDocs:
         self.verbose = verbose
         self.df = df
 
-        # Construct graph and image features
+        # Establish attributes
+        self.base_cluster_col = None
+        self.sub_cluster_col = None
+        self.text_col = None
+        self.scale_factor = None
+
+        # Assign attribute values, construct graph and image features
         self.update_doc_feats(  base_cluster_col=base_cluster_col,
                                 sub_cluster_col=sub_cluster_col,
-                                text_col=text_col)
+                                text_col=text_col,
+                                scale_factor=scale_factor)
 
     # END OF __init__
 
@@ -638,10 +648,10 @@ class PlotDocs:
         self._df = new_data.reset_index(drop=True).copy()
 
 
-    ################################
-    ##    DocDiff Attributes:     ##
-    ##       Update Methods       ##
-    ################################
+    #######################################
+    ##        DocDiff Attributes:        ##
+    ##    Internal Processing Methods    ##
+    #######################################
 
     @staticmethod
     def _filter_doc(txt:str) -> str:
@@ -804,10 +814,104 @@ class PlotDocs:
         return(img)
 
 
+    def _cluster_diff_img(self,
+                          base_cluster_id: int,
+                          sub_cluster_id: int | None = None):
+        """ 
+        Wrapper for image pipeline:
+        - _filter_doc() on individual texts
+        - _get_diff() cumulatively compares all texts in cluster
+        - _get_match() gets intersection of all texts in cluster
+        - _get_match_lens() determines lengths of matching vs non-matching segments
+        - _make_img() produces RGK image representation of doc intersection
+        """
+        # Gather texts for given cluster/sub-cluster
+        if sub_cluster_id:
+            txts = self.df.loc[(self.df[self.base_cluster_col] == base_cluster_id)
+                             & (self.df[self.sub_cluster_col] == sub_cluster_id),
+                                self.text_col].tolist()
+        else:
+            txts = self.df.loc[(self.df[self.base_cluster_col] == base_cluster_id),
+                                self.text_col].tolist()
+            
+        if not len(txts)>=2:
+            raise ValueError("Must provide at least 2 strings to compare.")
+        
+        # Basic text cleaning
+        t1 = self._filter_doc(txts[0])
+        t2 = self._filter_doc(txts[1])
+
+        diff = self._get_diff(t1, t2)
+        m_str = self._get_match(diff)
+
+        # Continuously take the intersection of all texts
+        for txt in txts[2:]:
+            _t = self._filter_doc(txt)
+            diff = self._get_diff(m_str, _t)
+            m_str = self._get_match(diff)
+        
+        # Get lengths of matching vs nonmatching sections
+        m_lens = self._get_match_lens(diff, nomatch_mean=False)
+
+        # Generate final image representation
+        img = self._make_img(m_lens)
+
+        return(img)
+
+
+    def _make_nx_graph( self,
+                        base_cluster_id: int,
+                        #images: dict,
+                        sub_cluster_ids: list[int] | None = None,
+                        #text_counts: dict | None = None,
+                        #scale: int | None = None
+                        ):
+        """
+        images : dict
+            Like {'cluster'/'subcluster': Image}
+        """
+        # Cluster graph
+        G = nx.Graph()
+        
+        # Add nodes
+        nodes = sub_cluster_ids or [base_cluster_id]
+        G.add_nodes_from(nodes)
+        
+        # Create edges - nodes are fully connected
+        G = nx.complete_graph(G)
+
+        # Assign attributes to graph & nodes
+        g_attr = {  
+            'cluster_id': base_cluster_id,
+            'scale': self.scale_factor * len(nodes)
+            }
+        for k,v in g_attr.items():
+            G.graph[k] = v
+
+        node_attrs = {
+            n: {
+                'label': f"<b>Cluster:</b> {base_cluster_id}"
+                        f"{f'<br><b>Subcluster:</b> {n}' if sub_cluster_ids else ''}"
+                        f"{f'<br><b># Texts: {self.text_counts[base_cluster_id][n]}</b>' if sub_cluster_ids else f'<br><b># Texts: {self.text_counts[n]}</b>'}",
+                'img': self.images[base_cluster_id][n] if sub_cluster_ids else self.images[n]
+                } 
+            for n in nodes
+            }
+        nx.set_node_attributes(G, node_attrs)
+
+        return(G)
+
+
+    ################################
+    ##    PlotDocs Attributes:    ##
+    ##      Updater Methods       ##
+    ################################
+
     def update_doc_feats(self,
                          base_cluster_col: str | None = None,
                          sub_cluster_col: str | None = None,
-                         text_col: str | None = None):
+                         text_col: str | None = None,
+                         scale_factor: int | None = None):
         """
         Update the object's doc-related features with new parameters.
         """
@@ -831,124 +935,56 @@ class PlotDocs:
             
             self.text_col = text_col
 
+        if scale_factor:
+            self.scale_factor = scale_factor
 
+        # Construct dicts of network graphs, images, and text counts for all cluster IDs
+        self.graphs = {}
+        self.images = defaultdict(dict)
+        self.text_counts = defaultdict(dict)
 
+        if self.sub_cluster_col:
+            for base_cluster in self.df[self.base_cluster_col].unique():
+                sub_clusters = []
+                for sub_cluster in self.df.loc[(self.df[self.base_cluster_col]==base_cluster),
+                                               self.sub_cluster_col].unique():
+                    sub_clusters.append(sub_cluster)
+
+                    self.images[base_cluster][sub_cluster] = self._cluster_diff_img(base_cluster_id=base_cluster,
+                                                                                    sub_cluster_id=sub_cluster)
+                    self.text_counts[base_cluster][sub_cluster] = self.df.loc[(self.df[self.base_cluster_col]==base_cluster)
+                                                                            & (self.df[self.sub_cluster_col]==sub_cluster)].shape[0]
+                
+                self.graphs[base_cluster] = self._make_nx_graph(base_cluster_id=base_cluster,
+                                                                     sub_cluster_ids=sub_clusters)
+        else:
+            for base_cluster in self.df[self.base_cluster_col].unique():
+                self.images[base_cluster] = self._cluster_diff_img(base_cluster_id=base_cluster)
+                
+                self.text_counts[base_cluster] = self.df.loc[(self.df[self.base_cluster_col]==base_cluster)].shape[0]
+                
+                self.graphs[base_cluster] = self._make_nx_graph(base_cluster_id=base_cluster)
+        
+        # Convert defaultdict to dict to reduce memory overhead
+        self.images = dict(self.images)
+        self.text_counts = dict(self.text_counts)
 
 
     ###################################
     ##    DocDiff Primary Methods    ##
     ###################################
 
-    def diff_img(self, *txts:str):
-        """ 
-        Wrapper for image pipeline:
-        - _filter_doc() on individual texts
-        - _get_diff() cumulatively compares all texts in cluster
-        - _get_match() gets intersection of all texts in cluster
-        - _get_match_lens() determines lengths of matching vs non-matching segments
-        - _make_img() produces RGK image representation of doc intersection
-        """
-        if not len(txts)>=2:
-            raise ValueError("Must provide at least 2 strings to compare.")
-        
-        # Basic text cleaning
-        t1 = filter_doc(txts[0])
-        t2 = filter_doc(txts[1])
-
-        diff = get_diff(t1, t2)
-        m_str = get_match(diff)
-
-        # Continuously take the intersection of all texts
-        for txt in txts[2:]:
-            _t = filter_doc(txt)
-            diff = get_diff(m_str, _t)
-            m_str = get_match(diff)
-        
-        # Get lengths of matching vs nonmatching sections
-        m_lens = match_lens(diff, nomatch_mean=False)
-
-        # Generate final image representation
-        img = img_gen(m_lens)
-
-        return(img)
-
-
-    def make_nx_graph(  self,
-                        cluster_id: str,
-                        images: dict,
-                        subcluster_ids: list | None = None,
-                        text_counts: dict | None = None,
-                        scale: int | None = None):
-        """
-        images : dict
-            Like {'cluster'/'subcluster': Image}
-        """
-        # Cluster graph
-        G = nx.Graph()
-        
-        # Add nodes
-        nodes = subcluster_ids or [cluster_id]
-        G.add_nodes_from(nodes)
-        
-        # Create edges - nodes are fully connected
-        G = nx.complete_graph(G)
-
-        # Assign attributes to graph & nodes
-        if not scale:
-            scale = 0.85 * len(nodes)
-
-        g_attr = {  
-            'cluster_id': cluster_id,
-            'scale': scale
-            }
-        for k,v in g_attr.items():
-            G.graph[k] = v
-
-        node_attrs = {
-            n: {
-                'label': f"<b>Cluster:</b> {cluster_id}"
-                        f"{f'<br><b>Subcluster:</b> {n}' if subcluster_ids else ''}"
-                        f"{f'<br><b># Texts: {text_counts[n]}</b>' if text_counts else ''}",
-                'img': images[n]
-                } 
-            for n in nodes
-            }
-        nx.set_node_attributes(G, node_attrs)
-
-        return(G)
-
-    """
-    subgraphs = [
-    make_nx_graph(
-        cluster_id=id1,
-        images={id2: diff_img(*doc2_df.loc[(doc2_df.lvl1_cluster == id1)
-                                         & (doc2_df.lvl2_cluster == id2), 'text_body'].tolist())
-                for id2 in doc2_df.loc[(doc2_df.lvl1_cluster == id1), 'lvl2_cluster'].unique()
-                },
-        subcluster_ids = [id2 for id2 in doc2_df.loc[(doc2_df.lvl1_cluster == id1), 'lvl2_cluster'].unique()],
-        text_counts = {id2: doc2_df.loc[(doc2_df.lvl1_cluster == id1)
-                                      & (doc2_df.lvl2_cluster == id2)].shape[0]
-                for id2 in doc2_df.loc[(doc2_df.lvl1_cluster == id1), 'lvl2_cluster'].unique()                         
-                },
-        #scale = 0.5,
-        #bubble_size = 300
-        )
-        for id1 in doc2_df['lvl1_cluster'].unique()
-    ]
-    """
-
     def plot(   self,
-                graphs: list,
                 max_subplot_cols: int = 3,
-                plot_range: int = 1,
-                img_scale: int | None = None,
-                marker_scale: int | None = None,
+                plot_range: float = 3,
+                img_scale: float = 1.5,
+                marker_scale: float = 10,
                 bubble_scale: int = 1000,
-                inplace:bool=True,
+                inplace:bool = True,
                 **kwargs):
         """ Plot the clusters """
         
-        num_clusters = len(graphs)
+        num_clusters = len(self.graphs)
 
         cols = min(max_subplot_cols, num_clusters)
         rows = int(num_clusters / max_subplot_cols) + (num_clusters%max_subplot_cols > 0)
@@ -956,6 +992,8 @@ class PlotDocs:
 
         fig = make_subplots(rows=rows, cols=cols,
                             vertical_spacing=0, horizontal_spacing=0)
+        
+        graph_keys = list(self.graphs.keys())
         graph_i = 0
         for r in range(1, rows+1):
             # TODO: This may be over-engineered; may need to simply make the 
@@ -966,7 +1004,8 @@ class PlotDocs:
             #    else range(1, remainder+1):
             for c in range(1, cols+1):
                 if graph_i < num_clusters:
-                    this_graph = graphs[graph_i]
+                    this_graph = self.graphs[graph_keys[graph_i]]
+
                     # Establish node coords
                     _ = nx.planar_layout(this_graph, 
                                         center = (0, 0), 

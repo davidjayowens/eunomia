@@ -3,7 +3,7 @@
 The primary data source used in these examples was a bulk download of several zip files from [LegiScan](https://legiscan.com/). For users who wish to compile their own dataset of bills from LegiScan, `eunomia.legiscanner` (based on [`pylegiscan`](https://github.com/poliquin/pylegiscan) by Chris Poliquin) is included in the library to make scraping relatively simple.
 
 ## Data summary
-After loading data into MongoDB using the steps below, my total collection includes 1,165,008 bills from across all 50 states, not including DC. Importantly, the bills are unevenly distributed - here's the breakdown of bill counts by state:  
+After loading data into MongoDB using the steps below, my total collection includes 1,165,008 bills from across all 50 states, not including DC. Importantly, the bills are unevenly distributed - this is to be expected,as some states have year-round legislatures while others only meet for sessions lasting up to a few weeks at a time. Some state legislatures only convene every 2 years. Here's the breakdown of my corpus's bill counts by state:  
 ```
 AK :   4,431 (0.31%)  
 AL :  14,698 (1.04%)  
@@ -90,7 +90,7 @@ loader = Legiscan2Mongo(
     load_dir = load_folder, # Path to folder with the zips
     mongo_db = 'example_db', # Database to use in MongoDB
     mongo_coll = 'example_collection' # Collection to use in MongoDB
-                        )
+    )
 ```
 Optionally, the `Legiscan2Mongo` class can be initialized with the `verbose = True` parameter to print additional status messages as each file is being processed. Summaries of the processing results are returned on completion - these can be allowed to pass directly to stdout, stored and printed, or (my preference) logged.
 
