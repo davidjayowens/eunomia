@@ -2,12 +2,7 @@
 Document clustering, visualization, and analysis of American state-level legislation.
 
 ## What is Eunomia?  
-This project was inspired by groups like the American Legislative Exchange Council (ALEC) and the Heritage Foundation, which produce example bills to promote a specific legislative and regulatory vision across the country. On their websites (as of May 2026), you can find model legislation such as: 
-- [Barring undocumented immigrants from operating any motor vehicle](https://alec.org/model-policy/protect-highways-act/)
-- [Charging undocumented K-12 students tuition to attend public school](https://www.heritage.org/model-legislation/charging-k-12-public-school-tuition-illegal-alien-students-act)
-- [Barring state funds from being provided to lawyers and legal organizations that offer services to undocumented immigrants](https://www.heritage.org/model-state-statute-barring-funding-lawyers-who-represent-illegal-aliens)
-
-The example bills produced by these special interest groups vary widely, but there are some clear themes.
+This project was inspired by political advocacy groups which produce model legislation to promote their regulatory vision across the country. The example bills these groups produce are regularly submitted at all levels of government - local, state, and federal - and not just once, but over and over, across numerous forums for years and years. It can be very difficult to fully assess the impact such groups actually have on the legislative regime that the average American is subject to.
 
 ## Who actually produces our legislation? 
 The goal of this project is to help identify groups of bills which can be traced back to a common source, with a particular focus on bills introduced across multiple states. Eunomia applies natural language processing (NLP) techniques to perform forensic authorship, identifying the groups and individuals actually responsible for creating them.
@@ -34,7 +29,7 @@ Off-the-shelf hierarchical clustering methods featurize the documents in a colle
 
 The standard hierarchical cluster analysis (HCA) methods are either bottom-up (agglomerative) or top-down (divisive). In bottom-up HCA, the two most similar documents would form the initial cluster, with the next-most-similar document then being added recursively until all documents form a single cluster. In the top-down approach, all documents start in a single cluster, which then gets recursively split into two or more clusters until a stopping metric is reached or all documents have been split into a "cluster" of n=1.
 
-Eunomia could be thought of as a form of top-down clustering, although as described above it uses different document features for the first-pass vs second-pass clusters. It also is not exhaustive - after the first pass is complete, sub-clustering is performed only on documents within a specific basis cluster; unclustered documents are excluded from further analysis.
+Eunomia could be thought of as a form of top-down clustering, although as described above it uses different document features for the first-pass vs second-pass clusters. It also is not exhaustive - after the first pass is complete, sub-clustering is performed on documents within each basis cluster separately; unclustered documents are excluded from further analysis.
 
 # How to use it
 The `eunomia` package can be installed via pip:

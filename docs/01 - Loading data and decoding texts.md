@@ -280,9 +280,10 @@ loader.save_decoding_fails(file_name='file/path/filename.csv')
 ```
 
 ## Drop unprocessed/incomplete records
-In order to clean up my final collection, I removed texts that either could not be successfully decoded or could not be stored in MongoDB.
-(3874)
+In order to clean up my final collection, I removed 3,874 bills that either could not be successfully decoded or could not be stored in MongoDB due to length.
 
+The command to do this looks like:
 
+```python
 loader.MONGO.delete_many({'text_body':None})
-
+```
