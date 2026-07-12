@@ -87,7 +87,7 @@ The `Legiscan2Mongo` class handles loading and organizing data, creating the Mon
 from eunomia.legimongo import Legiscan2Mongo
 
 loader = Legiscan2Mongo(
-    load_dir = load_folder, # Path to folder with the zips
+    load_dir = 'load_folder', # Path to folder with the zips
     mongo_db = 'example_db', # Database to use in MongoDB
     mongo_coll = 'example_collection' # Collection to use in MongoDB
     )

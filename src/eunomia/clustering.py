@@ -601,7 +601,7 @@ class DocCluster:
                           top_n_by: Literal['size', 'score', 'weighted'] = 'size',
                           force: bool = True,
                           drop_unclustered: bool = False,
-                          filter_bow: bool = True,
+                          filter_bow: bool = False,
                           stem_bow: bool = False,
                           gram_n: int = 5,
                           min_df: float = 0.05,
