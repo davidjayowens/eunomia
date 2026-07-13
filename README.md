@@ -27,6 +27,8 @@ After featurizing and clustering documents in the sample, two forms of visualiza
 ### PlotPolars
 The `PlotPolars` class represents clusters as polar line plots. All documents in each cluster are represented based on the strength of a parameterized number of features. Optionally, you can display the top vocabulary terms associated with each feature. Clusters can be stacked on a single comprehensive plot or split into per-cluster subplots.
 
+The radial axis labels reflect the most high value n-grams contributing to each PCA-reduced feature. The number of contributing terms displayed is parameterized, so is easily configured by the user.
+
 **First-order clusters, unified plot**
 ![polar base clusters](imgs/polars_base_plot.png)
 
@@ -37,6 +39,8 @@ When visualizing second-order clusters, only the sub-clusters within a single ba
 
 ### PlotDocs
 The `PlotDocs` class represents the intersection of documents in a cluster. Each "document" image plotted shows roughly where segments of text align across all documents in a given cluster.
+
+When rendering the actual plot, hovering the mouse over any individual "doc" identifies the cluster (and sub-cluster, if applicable), as well as the number of texts it contains.
 
 **First-order clusters**
 ![document base clusters](imgs/docs_base_plot.png)
