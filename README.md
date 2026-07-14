@@ -2,50 +2,71 @@
 Document clustering, visualization, and analysis of American state-level legislation.
 
 ## What is Eunomia?  
-This project was inspired by groups like the American Legislative Exchange Council (ALEC) and the Heritage Foundation, which produce example bills to promote a specific legislative and regulatory vision across the country. On their websites (as of May 2026), you can find model legislation such as: 
-- [Barring undocumented immigrants from operating any motor vehicle](https://alec.org/model-policy/protect-highways-act/)
-- [Charging undocumented K-12 students tuition to attend public school](https://www.heritage.org/model-legislation/charging-k-12-public-school-tuition-illegal-alien-students-act)
-- [Barring state funds from being provided to lawyers and legal organizations that offer services to undocumented immigrants](https://www.heritage.org/model-state-statute-barring-funding-lawyers-who-represent-illegal-aliens)
+This project was inspired by political advocacy groups which draft model legislation to promote their regulatory agendas. The generic bills these groups produce can be introduced across multiple states, often with only minor adjustments from the source text. It can be very difficult to fully assess the impact such groups actually have on the legislative regimes that Americans are subject to.
 
-The example bills produced by these special interest groups vary widely, but there are some clear themes.
+The goal of Eunomia is to help identify bills which can be traced back to a common source. Eunomia uses a combination of natural language processing (NLP) and clustering techniques to conduct forensic authorship, identifying the people responsible for creating and sponsoring model texts.
 
-## Who actually produces our legislation? 
-The goal of this project is to help identify groups of bills which can be traced back to a common source, with a particular focus on bills introduced across multiple states. Eunomia applies natural language processing (NLP) techniques to perform forensic authorship, identifying the groups and individuals actually responsible for creating them.
+# The Data model
+Eunomia uses two-tiered clustering to identify groups of bills by topic (first-order clusters), and then within each general topic, bills are analyzed for fine-grained textual similarity (second-order clusters). This approach aims to minimize the computational expense of applying unsupervised models to a large number of documents. 
 
-Special interest groups from across the political spectrum have become ever more adept at crafting and promoting "model" legislation in service of their political agendas, essentially promoting these pre-written bills, with "INSERT STATE HERE" placeholders, to state lawmakers. The politicians, in turn, often submit the model bills in their state legislatures with only minor edits - if they even bother to modify the language at all.
+## Text cleaning
+For first-order clusters, standard natural language processing techniques are applied to simplify texts and improve matchability, which facilitates baseline clustering. 
 
-The process of identifying what issues to legislate on, researching various regulatory schemes, and drafting legislation to promote a particular outcome can be time-consuming and expensive. It also requires a degree of legal expertise that most part-time lawmakers do not have. By providing lawmakers with model bills, special interest groups and legislators establish a symbiotic relationship. The interest groups make lawmakers' jobs easy by identifying legislatable issues for them, providing them with turnkey bills they can champion on the campaign trail; these groups' preferred policy agendas get promoted, and financial and political support are given to lawmakers in exchange.
+Although all parameters can be overridden by the user, the default is to filter out a customizable list of common terms ("stopwords"), truncate ("stem") all vocabulary to word roots, and then produce concatenated n-grams with a relatively low value of `n=3`. This should capture the general vocabulary of the texts, establishing broad clusters across a given sample. 
 
-Noticeably absent from this relationship is the electorate. Special interest groups may have little to no connection to the state(s) where their model legislation is enacted. Further, the texts of model bills are frequently negotiated behind closed doors, with no public oversight or input into this key step of the legislative process.
+The filtered, stemmed n-gram vocabulary is then used to produce TF-IDF ("term frequency - inverse document frequency") vectors for the entire sample.
 
-This raises very serious questions about the nature of American democracy: Who is actually producing the laws that govern us? Whose interests are being served by this system?
+For second-order clusters, TF-IDF vectors are re-calculated on a per-cluster basis, skipping the filtering and stemming steps to preserve the vocabulary as-is. Additionally, a higher value of `n=7` is used for producing more distinct n-grams. In this way, the document vectors produce a relatively unique "fingerprint" that, when clustered, may point to shared authorship.
 
-A lot of attention is paid to the sources of a candidate's campaign contributions as a metric of political influence and bias. The goal of Eunomia is to complement that analysis with a look at the influences on a legislator's material outputs once in office. "Whose homework are they copying?" is, or should be, just as pertinent as, "Whose money is supporting their campaigns?"
+## Clustering
+The actual clustering approach used is density-based, via cosine similarity of the document vectors. By default, Eunomia uses the `DBSCAN` algorithm from `scikit-learn`, although it is parameterized to use `HDBSCAN` or `OPTICS`. It can also accept other clustering models provided as an input, as long as they use `.fit()` and include a `.labels_` attribute.
 
-# Data model
-Eunomia uses two-tiered clustering to identify groups of bills by topic (first tier clusters), and then within each general topic, bills are analyzed for fine-grained textual similarity (second tier clusters).
+## Visualizing & analyzing clusters
+After featurizing and clustering documents in the sample, two forms of visualization are used to analyze clusters. For specific details of using the `eunomia.visualizer` package, see [the docs](<docs/02 - Clustering, visualization, and analysis.md>).
 
-This approach aims to minimize the computational expense of applying unsupervised models to a large number of documents. By filtering out a significant number of common stopwords, truncating ("stemming") terms to their common roots, and limiting the number of terms used to produce tokenized n-grams, the basis clusters (first tier) paint with a relatively broad brush. The idea is that this should capture the general vocabulary of the texts, establishing broad clusters across a given sample. Then, the basis clusters of interest are re-clustered with fewer filters, allowing more detailed lexical features to produce sub-clusters using specific, identifying language that may point to shared authorship.
+### PlotPolars
+The `PlotPolars` class represents clusters as polar line plots. All documents in each cluster are represented based on the strength of a parameterized number of features. Optionally, you can display the top vocabulary terms associated with each feature. Clusters can be stacked on a single comprehensive plot or split into per-cluster subplots.
 
-Topic-level clusters can also be used to identify general trends in legislation across states and over specific time spans.
+The radial axis labels reflect the most high value n-grams contributing to each PCA-reduced feature. The number of contributing terms displayed is parameterized, so is easily configured by the user.
 
-## How is this different from a standard hierarchical clustering approach?
-Off-the-shelf hierarchical clustering methods featurize the documents in a collection one time, and then use those features to build a comprehensive hierarchy of all available documents.
+**First-order clusters, unified plot**
+![polar base clusters](imgs/polars_base_plot.png)
 
-The standard hierarchical cluster analysis (HCA) methods are either bottom-up (agglomerative) or top-down (divisive). In bottom-up HCA, the two most similar documents would form the initial cluster, with the next-most-similar document then being added recursively until all documents form a single cluster. In the top-down approach, all documents start in a single cluster, which then gets recursively split into two or more clusters until a stopping metric is reached or all documents have been split into a "cluster" of n=1.
+**Second-order clusters, separate subplots**
+![polar sub clusters](imgs/polars_sub_plot.png)
 
-Eunomia could be thought of as a form of top-down clustering, although as described above it uses different document features for the first-pass vs second-pass clusters. It also is not exhaustive - after the first pass is complete, sub-clustering is performed only on documents within a specific basis cluster; unclustered documents are excluded from further analysis.
+When visualizing second-order clusters, only the sub-clusters within a single base cluster can be visualized at a time.
 
-# How to use it
-The `eunomia` package can be installed via pip:
+### PlotDocs
+The `PlotDocs` class represents the intersection of documents in a cluster. Each "document" image plotted shows roughly where segments of text align across all documents in a given cluster.
+
+When rendering the actual plot, hovering the mouse over any individual "doc" identifies the cluster (and sub-cluster, if applicable), as well as the number of texts it contains.
+
+**First-order clusters**
+![document base clusters](imgs/docs_base_plot.png)
+
+**Second-order clusters**
+![document sub clusters](imgs/docs_sub_plot.png)
+
+For second-order clusters, the sub-clusters are shown as a collection within a particular base cluster.
+
+## How does this differ from standard hierarchical clustering models?
+Basic hierarchical clustering methods featurize the documents in a collection one time, and then use those features to build a comprehensive hierarchy of all available documents.
+
+The standard hierarchical cluster analysis (HCA) methods are either bottom-up (agglomerative) or top-down (divisive). In bottom-up HCA, the two most similar documents would form the initial cluster, with the next-most similar document then being added recursively until all documents form a single cluster. In the top-down approach, all documents start in a single cluster, which then gets recursively split into two or more clusters until a stopping metric is reached or all documents have been split into a "cluster" of n=1.
+
+Eunomia is a hybrid model and not "true" hierarchical clustering, although it can be thought of as a pseudo-divisive approach. It produces first- and second-order clusters (aka, topic/base clusters and lexical/sub-clusters, respectively) similar to the hierarchical model, but it uses different document features at each level. It also is not exhaustive - after each pass is complete, unclustered documents are excluded from further analysis.
+
+# How to install
+After cloning the repository, the `eunomia` package can be installed via pip:
 ```
-(TBD)
+pip install <eunomia folder location>
 ```
 
 ## Example runbooks and analysis
-The pages in the [docs](docs) folder walks step by step through the details of the pipeline, with example usage and potential customizations.
+The pages in the [docs](docs) folder walk step by step through the details of the pipeline, with example usage and potential customizations.
 
 # Why "Eunomia"?
 <img align="right" width="200" src="imgs/eunomia.jpg" alt="Eunomia by Herman Rosse" />
-<a href="https://en.wikipedia.org/wiki/Eunomia">Eunomia</a> was a minor Greek deity dedicated to good laws and good governance. May she look favorably upon our work.
+<a href="https://en.wikipedia.org/wiki/Eunomia">Eunomia</a> was a minor Greek deity dedicated to good laws and good governance. May she look favorably upon this work.
 <div style="clear: both;"></div>

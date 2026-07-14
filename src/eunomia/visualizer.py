@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 from typing import Literal
+from collections import Counter, defaultdict
+import re
+
 import numpy as np
 import pandas as pd
+
+from sklearn.preprocessing import minmax_scale
+from sklearn.decomposition import PCA
+
+from diff_match_patch import diff_match_patch
+import networkx as nx
+from PIL import Image
 
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from plotly.express.colors import sample_colorscale
 
-from sklearn.preprocessing import minmax_scale
-from sklearn.decomposition import PCA
-
-import difflib
-import re
-from nltk.tokenize import sent_tokenize
 
 import logging
 log = logging.getLogger(__name__)
@@ -37,8 +41,8 @@ class VisualizeError(Exception):
 class PlotPolars:
     __slots__ = (
         '_df',          # pandas DataFrame
-        'tfidf_col',    # str
         'cluster_col',  # str
+        'tfidf_col',    # str
         'max_feats',    # int
         'scale_scope',  # str
         '_polar_df',    # pandas DataFrame
@@ -48,8 +52,8 @@ class PlotPolars:
 
     def __init__(   self,
                     df: pd.DataFrame,
-                    tfidf_col: str, 
-                    cluster_col: str, 
+                    cluster_col: str = 'lvl1_cluster', 
+                    tfidf_col: str = 'lvl1_tfidf', 
                     max_feats: int = 16,
                     scale_scope: Literal['collection', 'cluster', 'feature', 'vector'] = 'collection',
                     verbose: bool = False):
@@ -95,74 +99,74 @@ class PlotPolars:
         Examples of data scaling
         ------------------------
 
-                Sample data
-                -----------
-                cluster 1:
-                    vector 1: [0.01,        0.02,           0.05]
-                    vector 2: [0.15,        0.30,           0.75]
-                cluster 2:
-                    vector 1: [0.50,        0.01,           0.75]
-                    vector 2: [0.60,        0.15,           0.98]
+            Sample data
+            -----------
+            cluster 1:
+                vector 1: [0.01,        0.02,           0.05]
+                vector 2: [0.15,        0.30,           0.75]
+            cluster 2:
+                vector 1: [0.50,        0.01,           0.75]
+                vector 2: [0.60,        0.15,           0.98]
 
-                'collection' scaling
-                --------------------
-                cluster 1:
-                    vector 1: [0.0,         0.01030928,     0.04123711]
-                    vector 2: [0.1443299,   0.29896907,     0.7628866]
-                cluster 2:
-                    vector 1: [0.50515464,  0.0,            0.7628866]
-                    vector 2: [0.60824742,  0.1443299,      1.0]
-                Pros:
-                > Minimally transformative of the underlying data
-                > Relative values are still proportional to each other, 
-                  across all vectors/features/clusters
-                Cons:
-                > Some flattening of data, less dynamic range on a
-                  per-vector/feature/cluster basis
-                
-                'cluster' scaling
-                -----------------
-                cluster 1:
-                    vector 1: [0.0,         0.01351351, 0.05405405]
-                    vector 2: [0.18918919,  0.39189189, 1.0]
-                cluster 2:
-                    vector 1: [0.50515464,  0.0,        0.7628866]
-                    vector 2: [0.60824742,  0.1443299,  1.0]
-                Pros:
-                > Preserves relationships of values across vectors and 
-                  features within a cluster
-                > Greater dynamic range within a cluster; values not flattened 
-                  by extremes in other clusters
-                Cons:
-                > Reduced ability to compare values across clusters
+            'collection' scaling
+            --------------------
+            cluster 1:
+                vector 1: [0.0,         0.01030928,     0.04123711]
+                vector 2: [0.1443299,   0.29896907,     0.7628866]
+            cluster 2:
+                vector 1: [0.50515464,  0.0,            0.7628866]
+                vector 2: [0.60824742,  0.1443299,      1.0]
+            Pros:
+            > Minimally transformative of the underlying data
+            > Relative values are still proportional to each other, 
+                across all vectors/features/clusters
+            Cons:
+            > Some flattening of data, less dynamic range on a
+                per-vector/feature/cluster basis
+            
+            'cluster' scaling
+            -----------------
+            cluster 1:
+                vector 1: [0.0,         0.01351351, 0.05405405]
+                vector 2: [0.18918919,  0.39189189, 1.0]
+            cluster 2:
+                vector 1: [0.50515464,  0.0,        0.7628866]
+                vector 2: [0.60824742,  0.1443299,  1.0]
+            Pros:
+            > Preserves relationships of values across vectors and 
+                features within a cluster
+            > Greater dynamic range within a cluster; values not flattened 
+                by extremes in other clusters
+            Cons:
+            > Reduced ability to compare values across clusters
 
-                'feature' scaling
-                -----------------
-                cluster 1:
-                    vector 1: [0.0,         0.03448276,     0.0]
-                    vector 2: [0.23728814,  1.0,            0.75268817]
-                cluster 2:
-                    vector 1: [0.83050847,  0.0,            0.75268817]
-                    vector 2: [1.0,         0.48275862,     1.0]
-                Pros:
-                > Within each feature, shows which vectors & clusters have 
-                  the highest/lowest values
-                Cons:
-                > Loses comparative value between features across vectors/clusters
+            'feature' scaling
+            -----------------
+            cluster 1:
+                vector 1: [0.0,         0.03448276,     0.0]
+                vector 2: [0.23728814,  1.0,            0.75268817]
+            cluster 2:
+                vector 1: [0.83050847,  0.0,            0.75268817]
+                vector 2: [1.0,         0.48275862,     1.0]
+            Pros:
+            > Within each feature, shows which vectors & clusters have 
+                the highest/lowest values
+            Cons:
+            > Loses comparative value between features across vectors/clusters
 
-                'vector' scaling
-                ----------------
-                cluster 1:
-                    vector 1: [0.0,         0.25,   1.0]
-                    vector 2: [0.0,         0.25,   1.0]
-                cluster 2:
-                    vector 1: [0.66216216,  0.0,    1.0]
-                    vector 2: [0.54216867,  0.0,    1.0]
-                Pros:
-                > Within each vector, shows which features have the 
-                  highest/lowest values
-                Cons:
-                > Loses comparative value between vectors/clusters
+            'vector' scaling
+            ----------------
+            cluster 1:
+                vector 1: [0.0,         0.25,   1.0]
+                vector 2: [0.0,         0.25,   1.0]
+            cluster 2:
+                vector 1: [0.66216216,  0.0,    1.0]
+                vector 2: [0.54216867,  0.0,    1.0]
+            Pros:
+            > Within each vector, shows which features have the 
+                highest/lowest values
+            Cons:
+            > Loses comparative value between vectors/clusters
 
         """
         self.verbose = verbose
@@ -219,8 +223,8 @@ class PlotPolars:
     ##################################
 
     def update_polar_df(self,
-                        tfidf_col: str | None = None,
                         cluster_col: str | None = None,
+                        tfidf_col: str | None = None,
                         max_feats: int | None = None,
                         scale_scope: str | None = None):
         """ 
@@ -228,17 +232,17 @@ class PlotPolars:
         """
         df_cols = self.df.columns.tolist()
 
-        if tfidf_col:
-            if tfidf_col not in df_cols:
-                raise VisualizeError(f"Invalid value for parameter: {tfidf_col=}\nMust be one of {df_cols}")
-            
-            self.tfidf_col = tfidf_col
-
         if cluster_col:
             if cluster_col not in df_cols:
                 raise VisualizeError(f"Invalid value for parameter: {cluster_col=}\nMust be one of {df_cols}")
             
             self.cluster_col = cluster_col
+        
+        if tfidf_col:
+            if tfidf_col not in df_cols:
+                raise VisualizeError(f"Invalid value for parameter: {tfidf_col=}\nMust be one of {df_cols}")
+            
+            self.tfidf_col = tfidf_col
 
         if max_feats:
             self.max_feats = int(max_feats)
@@ -423,7 +427,7 @@ class PlotPolars:
         fig = make_subplots(rows=rows, cols=cols,
                             specs=specs, 
                             horizontal_spacing=kwargs.get('horizontal_spacing',0),
-                            vertical_spacing=kwargs.get('vertical_spacing',0.0))
+                            vertical_spacing=kwargs.get('vertical_spacing',0))
 
         # Add trace for each cluster
         row = 1
@@ -469,7 +473,7 @@ class PlotPolars:
                             showlegend = kwargs.get('showlegend',True),
                             template = kwargs.get('template','plotly_dark'),
                         )
-        if kwargs.get('autosize') and not kwargs.get('width') and not kwargs.get('height'):
+        if kwargs.get('autosize') or (not kwargs.get('width') and not kwargs.get('height')):
             fig.update_layout(autosize=True)
         else:
             fig.update_layout(autosize=False)
@@ -513,7 +517,7 @@ class PlotPolars:
                                     }})
 
         if inplace:
-            fig.show()
+            fig.show(config={'doubleClick': 'reset', 'displayModeBar': False})
         else:
             return(fig)
 
@@ -563,72 +567,553 @@ class PlotPolars:
 ##    Highlight Document Text Differences    ##
 ###############################################
 
-class DocDiff:
+class PlotDocs:
+    __slots__ = (
+        '_df',                  # pandas DataFrame
+        'base_cluster_col',     # str
+        'sub_cluster_col',      # str
+        'text_col',             # str
+        'scale_factor',         # float
+        'graphs',               # dict
+        'images',               # dict
+        'text_counts',          # dict
+        'verbose'               # bool
+    )
+
     def __init__(self,
                  df: pd.DataFrame,
-                 ):
+                 base_cluster_col: str = 'lvl1_cluster',
+                 sub_cluster_col: str | None = None,
+                 text_col: str = 'text_body',
+                 scale_factor: float = 0.85,
+                 verbose: bool = False):
         """
-        DocDiff creates visual displays of documents, highlighting similarities
+        PlotDocs creates visual displays of documents, highlighting similarities
         and differences, to facilitate analysis of document clusters.
 
         Parameters
         ----------
         df : pandas DataFrame
-            Clustered data, as produced by eunomia.clustering.DocCluster.
+            Clustered data, as produced by eunomia.clustering.DocCluster.make_doc_df().
+            > Features:
+            - lvl1_cluster
+            - (lvl2_cluster)
+            - text_body
 
         """
-        self._df = df.copy()
+        self.verbose = verbose
+        self.df = df
+
+        # Establish attributes
+        self.base_cluster_col = None
+        self.sub_cluster_col = None
+        self.text_col = None
+        self.scale_factor = None
+
+        # Assign attribute values, construct graph and image features
+        self.update_doc_feats(  base_cluster_col=base_cluster_col,
+                                sub_cluster_col=sub_cluster_col,
+                                text_col=text_col,
+                                scale_factor=scale_factor)
+
+    # END OF __init__
+
+    ###################################
+    ##    DocDiff Special Methods    ##
+    ###################################
+
+    def __repr__(self):
+        return(f"DocDiff(TBD)")
+    
+    def __str__(self) -> str:
+        return(f"DocDiff\n==========\n"
+               f"TBD"
+               )
 
 
+    ###############################
+    ##    DocDiff Attributes:    ##
+    ##      Getters & Setters    ##
+    ###############################
 
-    def filter_nums(text):
-        # Filter numbers and non-terminal punctuation
-        pattern1 = re.compile(r'(\d+)') # numbers
-        pattern2 = re.compile(r'["#$%&\'()*+,\-/\\:;<=>@[\]^_`{|}~]') # all punctuation except for: . ! ?
-        pattern3 = re.compile(r'\b(?=[mdclxvi])m*(c[md]|d?c{0,3})(x[cl]|l?x{0,3})(i[xv]|v?i{0,3})\b') # roman numerals
-        pattern4 = re.compile(r'\ +')
-
-        text_filtered = text
-        for pattern in [pattern1, pattern2, pattern3, pattern4]:
-            text_filtered = re.sub(pattern, ' ', text_filtered)
+    @property
+    def df(self) -> pd.DataFrame:
+        return(self._df)
+    @df.setter
+    def df(self, new_data):
+        if not isinstance(new_data, pd.DataFrame):
+            raise VisualizeError(f"Invalid object of type {type(new_data)}\nMust be pandas DataFrame.")
         
-        return(text_filtered)
+        # Enforce RangeIndex
+        self._df = new_data.reset_index(drop=True).copy()
 
 
-    def show_diff(lines1, lines2):
-        #lines1 = string1.splitlines()
-        #lines2 = string2.splitlines()
+    #######################################
+    ##        DocDiff Attributes:        ##
+    ##    Internal Processing Methods    ##
+    #######################################
 
-        differ = difflib.Differ()
-        diff = differ.compare(lines1, lines2)
+    @staticmethod
+    def _filter_doc(txt:str) -> str:
+        """ Apply simple text cleaning to improve document matching. """
+        filters = {
+            r'\d+': ' ',                        # all numbers
+            r'(?<=\s)[^\w\s]+(?=\s)': ' ',      # standalone punctuation
+            r'(?<=\s)\w(?=\s)': ' '             # single characters
+            }
 
-        for line in diff:
-            if line.startswith("- "):
-                print(f"\033[31m{line}\033[0m")  # Red for removals
-            elif line.startswith("+ "):
-                print(f"\033[32m{line}\033[0m")  # Green for additions
-            elif line.startswith("? "):
-                print(f"\033[33m{line}\033[0m")  # Yellow for hints
-            else:
-                print(line)
+        # Apply filters
+        for patt,repl in filters.items():
+            txt = re.sub(patt, repl, txt)
+        # Trim excess whitespace
+        txt = re.sub(r'\s+', ' ', txt).strip()      
+
+        return(txt)
+    
+
+    @staticmethod
+    def _get_diff(txt1:str, txt2:str):
+        """ Get diff_match_patch semantic diff of two texts. """
+        # Initialize dmp
+        dmp = diff_match_patch()
+        
+        # Create doc comparison
+        diff = dmp.diff_main(txt1, txt2)
+        dmp.diff_cleanupSemantic(diff)
+
+        return(diff)
 
 
-    def show_unified_diff(lines1, lines2):
-        #lines1 = string1.splitlines()
-        #lines2 = string2.splitlines()
-
-        diff = difflib.unified_diff(lines1, lines2, lineterm="")
-        for line in diff:
-            if line.startswith("-"):
-                print(f"\033[31m{line}\033[0m")  # Red for removals
-            elif line.startswith("+"):
-                print(f"\033[32m{line}\033[0m")  # Green for additions
-            else:
-                print(line)
+    @staticmethod
+    def _get_match(diff) -> str:
+        """ Join diff results back into a contiguous string """
+        matchstr = ' '.join([d[1] for d in diff if d[0]==0])
+        matchstr = re.sub(r'\s+', ' ', matchstr).strip()
+        
+        return(matchstr)
 
 
-    def doc_diff(df, idx1, idx2, text_col):
-        text1 = sent_tokenize(filter_nums(df.loc[idx1, text_col]))
-        text2 = sent_tokenize(filter_nums(df.loc[idx2, text_col]))
+    @staticmethod
+    def _get_match_lens(diff, nomatch_mean=True) -> list[tuple]:
+        """ 
+        Return (approximate) lengths of the matching vs non-matching text segments. 
+        
+        Returns list of tuples like: [('r'/'g', len)]
+            - 'r' for red (nonmatching)
+            - 'g' for green (matching)
+        
+        nomatch_mean : bool, default True
+            If True, when deleted text from the left doc is accompanied by
+            added/inserted text from the right doc, average their lengths to determine
+            the length of the non-matching segment.
 
-        return(show_diff(text1, text2))
+            If False, only the length of the addition in the right doc is used.
+
+            NOTE: Since the intersection of multiple texts results in fewer
+            deletions from the current intersection and mostly additions in the
+            newly compared doc, continuous averaging can make the final intersection
+            appear to be more of a match than it truly is. 
+            
+            Use True here if only comparing two documents, but use False when 
+            doing a series of cumulative intersections with n>2 docs. Important 
+            to remember that the resulting intersection of each comparison 
+            should be the "left" doc in each subsequent comparison made.
+
+        """
+        skip = False
+        lens = []
+        max_idx = len(diff) - 1
+        for i,t in enumerate(diff):
+            if t[0] == 0:   # Matching string
+                lens.append(('g', len(t[1])))
+                skip = False
+            elif t[0] == -1: # Deletion from string 1
+                if (i < max_idx) and (diff[i+1][0] == 1):  # Followed by addition to string 2
+                    if nomatch_mean:
+                        lens.append(('r', int(np.mean([len(t[1]), len(diff[i+1][1])]))))
+                    else:
+                        lens.append(('r', len(diff[i+1][1])))
+                    skip = True
+                else:   # Not followed by addition to string 2
+                    lens.append(('r', len(t[1])))
+                    skip = False
+            elif not skip:   # t[0]==1 -> Addition to string 2
+                lens.append(('r', len(t[1])))
+                skip = False
+        
+        return(lens)
+
+
+    @staticmethod
+    def _make_img(match_lens) -> Image:
+        """ Use results of match_lens() to produce a r/g/k image representation. """
+        colors = {
+            'k': (0,0,0),   # black
+            'r': (255,0,0), # red
+            'g': (0,255,0)  # green
+        }
+
+        # Find size of each block
+        total_len = sum([t[1] for t in match_lens])
+        size = total_len / 300
+
+        # Flat list of char colors
+        charlist = []
+        for tup in match_lens:
+            charlist.extend([tup[0]] * tup[1])
+
+        # 300 segments (5*5px) = 15 wide, 20 tall
+        pixels = []
+        i = 1
+        maxblock = 0
+        while maxblock < 300:
+            if size < 1.0:  # Each char -> multiple blocks
+                blocksize = 1.0/size
+                minblock = int((i-1)*blocksize)+1
+                maxblock = int((i)*blocksize)
+                top_char = charlist[i-1]
+                pixels.extend([top_char]*((maxblock-minblock)+1))
+            else:           # Each block -> multiple chars
+                maxblock = i
+                start = int((i-1)*size)
+                stop = int(i*size) + (1 if maxblock==300 else 0)
+                top_char = Counter(charlist[start:stop]).most_common()[0][0]
+                pixels.append(top_char)
+            i += 1
+        # pixels -> 300 'r'/'g' chars
+
+        # Add black borders: 17 segments top & bottom, 1 segment left & right
+        segdim = 5  # height & width
+        border_px = []
+        # Top border
+        border_px.extend(['k']*segdim*17*segdim)  # 5 px wide segment * 17 segments * 5 px high
+        
+        # Text rows
+        textrowsegs = 15
+        for i in range(20):
+            this_row = []
+            # Left border
+            this_row.extend(['k']*segdim)
+            # Text pixels
+            for px in pixels[(i*textrowsegs):(i*textrowsegs)+textrowsegs]:
+                this_row.extend([px]*segdim)
+            # Right border
+            this_row.extend(['k']*segdim)
+            border_px.extend(this_row*segdim)
+
+        # Bottom border:
+        border_px.extend(['k']*segdim*17*segdim)
+
+        # Replace r/g/k with actual RGB pixel values, reshape results
+        actual_px = [colors[px] for px in border_px]
+        px_arr = np.array(actual_px, dtype=np.uint8).reshape(110,85,3)
+
+        # Turn pixels into image
+        img = Image.fromarray(px_arr, mode='RGB')
+
+        return(img)
+
+
+    def _cluster_diff_img(self,
+                          base_cluster_id: int,
+                          sub_cluster_id: int | None = None):
+        """ 
+        Wrapper for image pipeline:
+        - _filter_doc() on individual texts
+        - _get_diff() cumulatively compares all texts in cluster
+        - _get_match() gets intersection of all texts in cluster
+        - _get_match_lens() determines lengths of matching vs non-matching segments
+        - _make_img() produces RGK image representation of doc intersection
+        """
+        # Gather texts for given cluster/sub-cluster
+        if sub_cluster_id:
+            txts = self.df.loc[(self.df[self.base_cluster_col] == base_cluster_id)
+                             & (self.df[self.sub_cluster_col] == sub_cluster_id),
+                                self.text_col].tolist()
+        else:
+            txts = self.df.loc[(self.df[self.base_cluster_col] == base_cluster_id),
+                                self.text_col].tolist()
+            
+        if not len(txts)>=2:
+            raise ValueError("Must provide at least 2 strings to compare.")
+        
+        # Basic text cleaning
+        t1 = self._filter_doc(txts[0])
+        t2 = self._filter_doc(txts[1])
+
+        diff = self._get_diff(t1, t2)
+        m_str = self._get_match(diff)
+
+        # Continuously take the intersection of all texts
+        for txt in txts[2:]:
+            _t = self._filter_doc(txt)
+            diff = self._get_diff(m_str, _t)
+            m_str = self._get_match(diff)
+        
+        # Get lengths of matching vs nonmatching sections
+        m_lens = self._get_match_lens(diff, nomatch_mean=False)
+
+        # Generate final image representation
+        img = self._make_img(m_lens)
+
+        return(img)
+
+
+    def _make_nx_graph( self,
+                        base_cluster_id: int,
+                        #images: dict,
+                        sub_cluster_ids: list[int] | None = None,
+                        #text_counts: dict | None = None,
+                        #scale: int | None = None
+                        ):
+        """
+        images : dict
+            Like {'cluster'/'subcluster': Image}
+        """
+        # Cluster graph
+        G = nx.Graph()
+        
+        # Add nodes
+        nodes = sub_cluster_ids or [base_cluster_id]
+        G.add_nodes_from(nodes)
+        
+        # Create edges - nodes are fully connected
+        G = nx.complete_graph(G)
+
+        # Assign attributes to graph & nodes
+        g_attr = {  
+            'cluster_id': base_cluster_id,
+            'scale': self.scale_factor * len(nodes)
+            }
+        for k,v in g_attr.items():
+            G.graph[k] = v
+
+        node_attrs = {
+            n: {
+                'label': f"<b>Cluster:</b> {base_cluster_id}"
+                        f"{f'<br><b>Subcluster:</b> {n}' if sub_cluster_ids else ''}"
+                        f"{f'<br><b># Texts: {self.text_counts[base_cluster_id][n]}</b>' if sub_cluster_ids else f'<br><b># Texts: {self.text_counts[n]}</b>'}",
+                'img': self.images[base_cluster_id][n] if sub_cluster_ids else self.images[n]
+                } 
+            for n in nodes
+            }
+        nx.set_node_attributes(G, node_attrs)
+
+        return(G)
+
+
+    ################################
+    ##    PlotDocs Attributes:    ##
+    ##      Updater Methods       ##
+    ################################
+
+    def update_doc_feats(self,
+                         base_cluster_col: str | None = None,
+                         sub_cluster_col: str | None = None,
+                         text_col: str | None = None,
+                         scale_factor: int | None = None):
+        """
+        Update the object's doc-related features with new parameters.
+        """
+        df_cols = self.df.columns.tolist()
+
+        if base_cluster_col:
+            if base_cluster_col not in df_cols:
+                raise VisualizeError(f"Invalid value for parameter: {base_cluster_col=}\nMust be one of {df_cols}")
+            
+            self.base_cluster_col = base_cluster_col
+
+        if sub_cluster_col:
+            if sub_cluster_col not in df_cols:
+                raise VisualizeError(f"Invalid value for parameter: {sub_cluster_col=}\nMust be one of {df_cols}")
+            
+            self.sub_cluster_col = sub_cluster_col
+
+        if text_col:
+            if text_col not in df_cols:
+                raise VisualizeError(f"Invalid value for parameter: {text_col=}\nMust be one of {df_cols}")
+            
+            self.text_col = text_col
+
+        if scale_factor:
+            self.scale_factor = scale_factor
+
+        # Construct dicts of network graphs, images, and text counts for all cluster IDs
+        self.graphs = {}
+        self.images = defaultdict(dict)
+        self.text_counts = defaultdict(dict)
+
+        if self.sub_cluster_col:
+            for base_cluster in self.df[self.base_cluster_col].unique():
+                sub_clusters = []
+                for sub_cluster in self.df.loc[(self.df[self.base_cluster_col]==base_cluster),
+                                               self.sub_cluster_col].unique():
+                    sub_clusters.append(sub_cluster)
+
+                    self.images[base_cluster][sub_cluster] = self._cluster_diff_img(base_cluster_id=base_cluster,
+                                                                                    sub_cluster_id=sub_cluster)
+                    self.text_counts[base_cluster][sub_cluster] = self.df.loc[(self.df[self.base_cluster_col]==base_cluster)
+                                                                            & (self.df[self.sub_cluster_col]==sub_cluster)].shape[0]
+                
+                self.graphs[base_cluster] = self._make_nx_graph(base_cluster_id=base_cluster,
+                                                                     sub_cluster_ids=sub_clusters)
+        else:
+            for base_cluster in self.df[self.base_cluster_col].unique():
+                self.images[base_cluster] = self._cluster_diff_img(base_cluster_id=base_cluster)
+                
+                self.text_counts[base_cluster] = self.df.loc[(self.df[self.base_cluster_col]==base_cluster)].shape[0]
+                
+                self.graphs[base_cluster] = self._make_nx_graph(base_cluster_id=base_cluster)
+        
+        # Convert defaultdict to dict to reduce memory overhead
+        self.images = dict(self.images)
+        self.text_counts = dict(self.text_counts)
+
+
+    ###################################
+    ##    DocDiff Primary Methods    ##
+    ###################################
+
+    def plot(   self,
+                max_subplot_cols: int = 3,
+                plot_range: float = 3,
+                img_scale: float = 1.5,
+                marker_scale: float = 10,
+                bubble_scale: int = 1000,
+                inplace:bool = True,
+                **kwargs):
+        """ Plot the clusters """
+        
+        num_clusters = len(self.graphs)
+
+        cols = min(max_subplot_cols, num_clusters)
+        rows = int(num_clusters / max_subplot_cols) + (num_clusters%max_subplot_cols > 0)
+        remainder = num_clusters % max_subplot_cols
+
+        fig = make_subplots(rows=rows, cols=cols,
+                            vertical_spacing=0, horizontal_spacing=0)
+        
+        graph_keys = list(self.graphs.keys())
+        graph_i = 0
+        for r in range(1, rows+1):
+            # TODO: This may be over-engineered; may need to simply make the 
+            # plotting conditional on if graph_i < num_clusters, but still style axes
+            # for subplots without actual graphs
+            #for c in range(1, cols+1) if not remainder \
+            #    else range(1, cols+1) if (r<rows) \
+            #    else range(1, remainder+1):
+            for c in range(1, cols+1):
+                if graph_i < num_clusters:
+                    this_graph = self.graphs[graph_keys[graph_i]]
+
+                    # Establish node coords
+                    _ = nx.planar_layout(this_graph, 
+                                        center = (0, 0), 
+                                        scale = this_graph.graph['scale'],
+                                        store_pos_as = 'pos')
+
+                    # Plot edges between subclusters
+                    edge_x = []
+                    edge_y = []
+                    for edge in this_graph.edges():
+                        x0, y0 = this_graph.nodes[edge[0]]['pos']
+                        x1, y1 = this_graph.nodes[edge[1]]['pos']
+                        edge_x.append(x0)
+                        edge_x.append(x1)
+                        edge_x.append(None)
+                        edge_y.append(y0)
+                        edge_y.append(y1)
+                        edge_y.append(None)
+                    # Add edges to subplot
+                    fig.add_trace(go.Scatter(
+                            x=edge_x, y=edge_y,
+                            line=dict(width=0.5, color='black'),
+                            hoverinfo='none',
+                            mode='lines',
+                            zorder=1
+                        ), row=r, col=c)
+                    
+                    # Plot images w/ underlying annotated markers
+                    node_x = []
+                    node_y = []
+                    labels = []
+                    for node in this_graph.nodes():
+                        x,y = this_graph.nodes[node]['pos']
+                        node_x.append(x)
+                        node_y.append(y)
+                        labels.append(this_graph.nodes[node]['label'])
+                        # Add image to subplot
+                        fig.add_layout_image(
+                                dict(x=x,                y=y,
+                                    xref='x',           yref='y',
+                                    xanchor='center',   yanchor='middle',
+                                    sizing='contain',
+                                    opacity=1.0,
+                                    layer='above',
+                                    source=this_graph.nodes[node]['img']
+                            ), row=r, col=c)
+                    # Add annotated markers to subplot
+                    fig.add_trace(go.Scatter(
+                        x=node_x, y=node_y,
+                        mode='markers',
+                        marker=dict(
+                            showscale=False,
+                            color='black',
+                            size=marker_scale,
+                            sizemode='diameter'
+                        ),
+                        hoverinfo='text',
+                        text=labels,
+                        zorder=2,
+                    ), row=r, col=c)
+                # END OF graph-specific plotting steps
+                
+                # Add circle around cluster/to fill subplot window
+                fig.add_trace(go.Scatter(
+                    x = [0],   
+                    y = [0],
+                    mode='markers',
+                    marker=dict(
+                        size=bubble_scale,
+                        sizemode='diameter',
+                    ),
+                    hoverinfo='none',
+                    zorder=0
+                ), row=r, col=c)
+
+                # Set axes
+                fig.update_xaxes(range=[-plot_range*1.5,plot_range*1.5], 
+                                visible=False, 
+                                row=r, col=c)
+                fig.update_yaxes(range=[-plot_range,plot_range], 
+                                #scaleanchor = "x", 
+                                #scaleratio = 1,
+                                visible=False, 
+                                row=r, col=c)
+                graph_i += 1
+
+        fig.update_layout(template='plotly', 
+                            showlegend=False,
+                            #width=900, height=600,
+                            #margin={'l':10,'r':10,'t':10,'b':10},
+                            hovermode='closest')
+        fig.update_layout_images(sizex=img_scale, sizey=img_scale)
+        
+        # Optional settings
+        if kwargs.get('autosize') or (not kwargs.get('width') and not kwargs.get('height')):
+            fig.update_layout(autosize=True)
+        else:
+            fig.update_layout(autosize=False)
+            if kwargs.get('width'):
+                fig.update_layout(width=kwargs.get('width'))
+            if kwargs.get('height'):
+                fig.update_layout(height=kwargs.get('height'))
+
+        fig.update_layout(margin=kwargs.get('margin', {'l':10,'r':10,'t':10,'b':10}))
+
+        if inplace:
+            fig.show(config={'doubleClick': 'reset', 'displayModeBar': False})
+        else:
+            return(fig)
+        
+# END OF DocDiff class
